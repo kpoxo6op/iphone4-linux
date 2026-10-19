@@ -1,0 +1,6 @@
+.cache/
+output/
+.runtime/
+__pycache__/
+*.pyc
+opencode.local.json

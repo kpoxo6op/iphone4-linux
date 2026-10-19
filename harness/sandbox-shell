@@ -1,0 +1,40 @@
+#!/usr/bin/python3
+"""OpenCode shell executable. Host paths/config are maintainer controlled."""
+import json
+import os
+from pathlib import Path
+import sys
+
+root = Path(__file__).resolve().parent.parent
+cfg = json.loads((root / '.runtime/settings.json').read_text())
+cwd = Path.cwd().resolve()
+lane = next((x for x in cfg['workers'] if cwd.is_relative_to(Path(x['path']))), None)
+if lane is None:
+    sys.exit('Refusing shell outside a registered worker checkout')
+base = Path(lane['path'])
+args = ['bwrap', '--die-with-parent', '--unshare-user', '--unshare-pid',
+        '--unshare-ipc', '--unshare-uts', '--cap-drop', 'ALL', '--clearenv',
+        '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin',
+        '--symlink', 'usr/sbin', '/sbin', '--symlink', 'usr/lib', '/lib',
+        '--symlink', 'usr/lib64', '/lib64', '--proc', '/proc', '--dev', '/dev',
+        '--tmpfs', '/tmp', '--tmpfs', '/run', '--dir', '/etc',
+        '--tmpfs', '/home', '--dir', '/home/boris']
+for f in ('ssl', 'resolv.conf', 'hosts', 'nsswitch.conf', 'passwd', 'group',
+          'ld.so.cache', 'localtime'):
+    if Path('/etc', f).exists():
+        args += ['--ro-bind', '/etc/' + f, '/etc/' + f]
+args += ['--bind', str(base), str(base), '--ro-bind', str(root / 'harness'), '/acceptance',
+         '--ro-bind', str(root / '.cache'), '/seed']
+# Protect governance even if a worker invokes a generic shell editor.
+for f in ('AGENTS.md', 'goals', 'harness', '.opencode', 'opencode.json'):
+    if (base / f).exists():
+        args += ['--ro-bind', str(base / f), str(base / f)]
+args += ['--setenv', 'PATH', '/usr/bin:/bin:/usr/sbin:/sbin',
+         '--setenv', 'HOME', os.environ['HOME'], '--setenv', 'LANG', 'C.UTF-8',
+         '--setenv', 'TERM', 'xterm-256color', '--setenv', 'MAKEFLAGS', '-j2',
+         '--setenv', 'GIT_CONFIG_NOSYSTEM', '1', '--chdir', str(cwd), '/bin/bash']
+args += sys.argv[1:]
+command = ['systemd-run', '--user', '--scope', '--quiet',
+           '-p', 'CPUQuota=150%', '-p', f"MemoryMax={lane['memory']}",
+           '-p', 'TasksMax=256', '-p', 'RuntimeMaxSec=7200', '--'] + args
+os.execvp(command[0], command)

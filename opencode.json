@@ -1,0 +1,61 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "model": "deepseek/deepseek-flash#high",
+  "default_agent": "iphone-worker",
+  "shell": "/home/boris/code/iphone4-linux/harness/sandbox-shell",
+  "share": "disabled",
+  "update": "disable",
+  "snapshots": false,
+  "lsp": false,
+  "formatter": false,
+  "policies": [
+    {
+      "action": "provider.use",
+      "resource": "*",
+      "effect": "deny"
+    },
+    {
+      "action": "provider.use",
+      "resource": "deepseek",
+      "effect": "allow"
+    }
+  ],
+  "agents": {
+    "iphone-worker": {
+      "model": "deepseek/deepseek-flash#high",
+      "mode": "primary",
+      "description": "Bounded iPhone 4 Linux worker",
+      "steps": 80,
+      "system": "Read AGENTS.md and your goal using the shell tool. All file operations must use the sandboxed shell. Do not use other agents or models. Preserve evidence and completion notes. Do not change governance or acceptance files.",
+      "permissions": [
+        {
+          "action": "*",
+          "resource": "*",
+          "effect": "deny"
+        },
+        {
+          "action": "shell",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "webfetch",
+          "resource": "*",
+          "effect": "allow"
+        },
+        {
+          "action": "websearch",
+          "resource": "*",
+          "effect": "allow"
+        }
+      ]
+    }
+  },
+  "watcher": {
+    "ignore": [
+      ".cache/**",
+      "output/**",
+      ".runtime/**"
+    ]
+  }
+}

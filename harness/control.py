@@ -1,0 +1,150 @@
+#!/usr/bin/env python3
+"""Small OpenCode goal supervisor. No inference outside the assigned sessions."""
+import argparse
+from datetime import datetime, timezone, timedelta
+import hashlib
+import json
+from pathlib import Path
+import shutil
+import subprocess as sp
+import time
+
+ROOT = Path(__file__).resolve().parent.parent
+STATE = ROOT / '.runtime'
+MODEL = {'providerID': 'deepseek', 'id': 'deepseek-flash', 'variant': 'high'}
+UNIT = 'iphone4-linux-goals'
+
+
+def off_peak(now=None):
+    """Official UTC schedule; conservatively skip holiday exceptions.
+
+    Five-minute buffer allows in-flight generations to be interrupted before
+    peak billing starts. Weekends use UTC, not the laptop's timezone.
+    """
+    now = now or datetime.now(timezone.utc)
+    for dt in (now, now + timedelta(minutes=5)):
+        if dt.weekday() < 5 and (1 <= dt.hour < 4 or 6 <= dt.hour < 10):
+            return False
+    return True
+
+
+def api(method, path, body=None, cwd=ROOT):
+    args = ['opencode', 'api', method, path]
+    if body is not None:
+        args += ['--data', json.dumps(body)]
+    r = sp.run(args, cwd=cwd, text=True, capture_output=True, timeout=60, check=True)
+    j = json.loads(r.stdout)
+    return j.get('data', j) if isinstance(j, dict) else j
+
+
+def save(cfg):
+    temporary = STATE / 'settings.tmp'
+    temporary.write_text(json.dumps(cfg, indent=2) + '\n')
+    temporary.replace(STATE / 'settings.json')
+
+
+def interrupt(worker):
+    api('POST', f"/api/session/{worker['session']}/interrupt", {}, worker['path'])
+
+
+def tick(cfg):
+    active_ids = api('GET', '/api/session/active')
+    for w in cfg['workers']:
+        if w.get('state') in ('awaiting_review', 'blocked', 'stopped', 'limit'):
+            continue
+        try:
+            active = w['session'] in active_ids
+            if not off_peak():
+                if active:
+                    interrupt(w)
+                w['state'] = 'waiting_off_peak'
+                save(cfg)
+                continue
+            if active:
+                if time.time() - w.get('last_sent', time.time()) > 14400:
+                    interrupt(w)
+                    w['state'] = 'blocked'
+                    w['reason'] = 'Four-hour turn limit reached; inspect session before resuming'
+                continue
+            note_path = Path(w['path']) / 'notes/status.json'
+            note = json.loads(note_path.read_text()) if note_path.exists() else {}
+            if note.get('status') in ('ready_for_review', 'blocked'):
+                w['state'] = 'awaiting_review' if note['status'] == 'ready_for_review' else 'blocked'
+                w['reason'] = note.get('summary', '')
+                continue
+            if time.time() < w.get('next_run', 0):
+                continue
+            if shutil.disk_usage(w['path']).free < 20 * 1024**3:
+                w.update(state='limit', reason='Less than 20 GiB free disk')
+                continue
+            if w.get('turns', 0) >= 96:
+                w.update(state='limit', reason='96 work cycles reached')
+                continue
+            progress = sp.run(['git', 'diff', 'HEAD'], cwd=w['path'], capture_output=True).stdout
+            progress += sp.run(['git', 'status', '--porcelain'], cwd=w['path'], capture_output=True).stdout
+            digest = hashlib.sha256(progress + json.dumps(note, sort_keys=True).encode()).hexdigest()
+            w['unchanged'] = w.get('unchanged', 0) + 1 if digest == w.get('digest') else 0
+            if w['unchanged'] >= 3:
+                w.update(state='blocked', reason='Three unchanged cycles; inspect evidence before resuming')
+                continue
+            w['digest'] = digest
+            api('POST', f"/api/session/{w['session']}/model", {'model': MODEL}, w['path'])
+            prompt = (f"Continue /goals {w['name']}. Read AGENTS.md, goals/{w['name']}.md, "
+                      'and notes/GOAL.md if present using the shell tool. Work on the next concrete '
+                      'experiment. Write notes/GOAL.md and notes/status.json before ending. '
+                      'If complete set ready_for_review, never claim reviewer acceptance. '
+                      'If physical hardware or a repeated failure prevents progress, set blocked. '
+                      'Do not edit governance, the harness, or model configuration. '
+                      'Your shell is isolated; /seed has verified source archives and /acceptance '
+                      'has the independent checks. Do not call other models. '
+                      'The official deepseek/deepseek-flash route is DeepSeek-V4.1-Flash-1017.')
+            api('POST', f"/api/session/{w['session']}/prompt", {'text': prompt}, w['path'])
+            w.update(state='running', last_sent=time.time(), next_run=time.time() + 300,
+                     turns=w.get('turns', 0) + 1, errors=0)
+        except Exception as exc:
+            w['errors'] = w.get('errors', 0) + 1
+            w['reason'] = str(exc)[:500]
+            w['next_run'] = time.time() + min(3600, 60 * 2**min(w['errors'], 6))
+            if w['errors'] >= 5:
+                w['state'] = 'blocked'
+        save(cfg)
+
+
+def main():
+    p = argparse.ArgumentParser()
+    p.add_argument('command', choices=('start', 'run', 'status', 'stop'))
+    a = p.parse_args()
+    cfg = json.loads((STATE / 'settings.json').read_text())
+    if a.command == 'status':
+        for w in cfg['workers']:
+            print(f"{w['name']}: {w.get('state', 'pending')} turns={w.get('turns', 0)} "
+                  f"session={w['session']} {w.get('reason', '')}")
+        print('Deadline:', datetime.fromtimestamp(cfg['deadline'], timezone.utc).isoformat())
+    elif a.command == 'stop':
+        sp.run(['systemctl', '--user', 'stop', UNIT], check=False)
+        for w in cfg['workers']:
+            interrupt(w)
+            w['state'] = 'stopped'
+        save(cfg)
+    elif a.command == 'start':
+        sp.run(['systemd-run', '--user', '--unit=' + UNIT, '--collect',
+                '-p', 'Restart=on-failure', '-p', 'RestartSec=60',
+                '-p', 'RuntimeMaxSec=7d', '-p', 'WorkingDirectory=' + str(ROOT),
+                '/usr/bin/python3', str(Path(__file__).resolve()), 'run'], check=True)
+    else:
+        while time.time() < cfg['deadline']:
+            tick(cfg)
+            if all(w.get('state') in ('awaiting_review', 'blocked', 'stopped', 'limit')
+                   for w in cfg['workers']):
+                break
+            time.sleep(30)
+        else:
+            for w in cfg['workers']:
+                if w.get('state') == 'running':
+                    interrupt(w)
+                    w.update(state='limit', reason='Seven-day run window ended')
+            save(cfg)
+
+
+if __name__ == '__main__':
+    main()
