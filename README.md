@@ -17,7 +17,8 @@ Three independent OpenCode workers are assigned [goals](goals/README.md):
 3. **drivers**: evidence-based Wi-Fi, touch and storage bring-up work.
 
 Workers use **DeepSeek-V4.1-Flash-1017** through the official API alias
-`deepseek/deepseek-flash`. [DeepSeek documents this alias](https://api-docs.deepseek.com/).
+`deepseek/deepseek-flash`, always at the highest available effort (`max`).
+[DeepSeek documents this alias](https://api-docs.deepseek.com/).
 The separately named OpenCode free model is not substituted. There is no paid
 model fallback. This official API route may incur charges.
 

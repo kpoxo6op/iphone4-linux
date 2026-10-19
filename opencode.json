@@ -1,6 +1,6 @@
 {
   "$schema": "https://opencode.ai/config.json",
-  "model": "deepseek/deepseek-flash#high",
+  "model": "deepseek/deepseek-flash#max",
   "default_agent": "iphone-worker",
   "shell": "/home/boris/code/iphone4-linux/harness/sandbox-shell",
   "share": "disabled",
@@ -22,7 +22,7 @@
   ],
   "agents": {
     "iphone-worker": {
-      "model": "deepseek/deepseek-flash#high",
+      "model": "deepseek/deepseek-flash#max",
       "mode": "primary",
       "description": "Bounded iPhone 4 Linux worker",
       "steps": 80,

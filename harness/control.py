@@ -11,7 +11,7 @@ import time
 
 ROOT = Path(__file__).resolve().parent.parent
 STATE = ROOT / '.runtime'
-MODEL = {'providerID': 'deepseek', 'id': 'deepseek-flash', 'variant': 'high'}
+MODEL = {'providerID': 'deepseek', 'id': 'deepseek-flash', 'variant': 'max'}
 UNIT = 'iphone4-linux-goals'
 
 

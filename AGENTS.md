@@ -6,7 +6,7 @@ filesystem sandbox. Do not bypass it or change OpenCode configuration, this
 contract, goal definitions, or the acceptance harness. The original acceptance
 files are mounted read-only at /acceptance. Local copies are not authoritative.
 
-- Use only DeepSeek-V4.1-Flash-1017 through deepseek/deepseek-flash. Never consult
+- Use only DeepSeek-V4.1-Flash-1017 through deepseek/deepseek-flash at max effort. Never consult
   another model, spawn agents, use paid coding assistants, or install plugins.
 - No sudo, host package installs, host services, credentials, other repositories,
   private network services, phone access, USB, flashing, repartitioning or NAND writes.
