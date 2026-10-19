@@ -33,6 +33,8 @@ def api(method, path, body=None, cwd=ROOT):
     if body is not None:
         args += ['--data', json.dumps(body)]
     r = sp.run(args, cwd=cwd, text=True, capture_output=True, timeout=60, check=True)
+    if not r.stdout.strip():
+        return None
     j = json.loads(r.stdout)
     return j.get('data', j) if isinstance(j, dict) else j
 
@@ -98,7 +100,8 @@ def tick(cfg):
                       'Your shell is isolated; /seed has verified source archives and /acceptance '
                       'has the independent checks. Do not call other models. '
                       'The official deepseek/deepseek-flash route is DeepSeek-V4.1-Flash-1017.')
-            api('POST', f"/api/session/{w['session']}/prompt", {'text': prompt}, w['path'])
+            api('POST', f"/api/session/{w['session']}/command",
+                {'name': 'goals', 'text': w['name'] + '\n' + prompt}, w['path'])
             w.update(state='running', last_sent=time.time(), next_run=time.time() + 300,
                      turns=w.get('turns', 0) + 1, errors=0)
         except Exception as exc:
@@ -110,27 +113,54 @@ def tick(cfg):
         save(cfg)
 
 
+def gate(cfg):
+    """Independent minute watchdog: stop inference outside the paid window."""
+    if off_peak() and time.time() < cfg['deadline']:
+        return
+    active = api('GET', '/api/session/active')
+    for worker in cfg['workers']:
+        if worker['session'] in active:
+            interrupt(worker)
+
+
 def main():
     p = argparse.ArgumentParser()
-    p.add_argument('command', choices=('start', 'run', 'status', 'stop'))
+    p.add_argument('command', choices=('start', 'run', 'status', 'stop', 'gate'))
     a = p.parse_args()
     cfg = json.loads((STATE / 'settings.json').read_text())
-    if a.command == 'status':
+    if a.command == 'gate':
+        gate(cfg)
+    elif a.command == 'status':
         for w in cfg['workers']:
             print(f"{w['name']}: {w.get('state', 'pending')} turns={w.get('turns', 0)} "
                   f"session={w['session']} {w.get('reason', '')}")
         print('Deadline:', datetime.fromtimestamp(cfg['deadline'], timezone.utc).isoformat())
     elif a.command == 'stop':
-        sp.run(['systemctl', '--user', 'stop', UNIT], check=False)
+        sp.run(['systemctl', '--user', 'disable', '--now', UNIT,
+                UNIT + '-gate.timer'], check=False)
         for w in cfg['workers']:
             interrupt(w)
             w['state'] = 'stopped'
         save(cfg)
     elif a.command == 'start':
-        sp.run(['systemd-run', '--user', '--unit=' + UNIT, '--collect',
-                '-p', 'Restart=on-failure', '-p', 'RestartSec=60',
-                '-p', 'RuntimeMaxSec=7d', '-p', 'WorkingDirectory=' + str(ROOT),
-                '/usr/bin/python3', str(Path(__file__).resolve()), 'run'], check=True)
+        unitdir = Path.home() / '.config/systemd/user'
+        unitdir.mkdir(parents=True, exist_ok=True)
+        executable = Path(__file__).resolve()
+        (unitdir / (UNIT + '.service')).write_text(
+            '[Unit]\nDescription=iPhone 4 Linux off-peak DeepSeek goals\n'
+            '[Service]\nType=simple\nRestart=on-failure\nRestartSec=60\n'
+            f'WorkingDirectory={ROOT}\nExecStart=/usr/bin/python3 {executable} run\n'
+            '[Install]\nWantedBy=default.target\n')
+        (unitdir / (UNIT + '-gate.service')).write_text(
+            '[Unit]\nDescription=iPhone 4 Linux off-peak cutoff watchdog\n'
+            f'[Service]\nType=oneshot\nExecStart=/usr/bin/python3 {executable} gate\n')
+        (unitdir / (UNIT + '-gate.timer')).write_text(
+            '[Unit]\nDescription=Check iPhone worker billing window every minute\n'
+            '[Timer]\nOnCalendar=*-*-* *:*:00\nPersistent=true\nAccuracySec=1s\n'
+            '[Install]\nWantedBy=timers.target\n')
+        sp.run(['systemctl', '--user', 'daemon-reload'], check=True)
+        sp.run(['systemctl', '--user', 'enable', '--now', UNIT,
+                UNIT + '-gate.timer'], check=True)
     else:
         while time.time() < cfg['deadline']:
             tick(cfg)
