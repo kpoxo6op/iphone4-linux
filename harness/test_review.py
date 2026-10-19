@@ -11,11 +11,16 @@ import review
 class ReviewBoundaries(unittest.TestCase):
     def test_attempt_budget_uses_auckland_day_and_spacing(self):
         # A UTC date rollover must not grant extra paid reviews in Auckland.
-        t = datetime(2026, 10, 20, 13, tzinfo=ZoneInfo('Pacific/Auckland')).timestamp()
+        t = datetime(2026, 10, 20, 23, tzinfo=ZoneInfo('Pacific/Auckland')).timestamp()
         self.assertFalse(review.budget_ok([{'started': t - 3600}], t))
-        self.assertTrue(review.budget_ok([{'started': t - 7 * 3600}], t))
-        self.assertFalse(review.budget_ok([{'started': t - 12 * 3600},
-                                          {'started': t - 6 * 3600}], t))
+        self.assertTrue(review.budget_ok([{'started': t - 2 * 3600}], t))
+        attempts = [{'started': t - hours * 3600, 'state': 'failed'}
+                    for hours in range(22, 2, -2)]
+        self.assertTrue(review.budget_ok(attempts[:-1], t))
+        self.assertFalse(review.budget_ok(attempts, t))
+        # A fresh Auckland date grants slots, but cannot bypass inter-review spacing.
+        self.assertTrue(review.budget_ok(attempts, t + 2 * 3600))
+        self.assertFalse(review.budget_ok([{'started': t + 1800}], t + 3600))
 
     def test_packet_refuses_symlink_and_private_key(self):
         # Real outbound leakage cannot safely be tested with a real secret.

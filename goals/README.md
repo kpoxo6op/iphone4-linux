@@ -25,5 +25,6 @@ remain pending until the phone is available. Do not require NAND installation.
 [GitHub goals](https://github.com/kpoxo6op/iphone4-linux/issues) track scope and
 review. See the [agent workflow](../docs/agent-workflow.md).
 
-The initial run window is seven days. Completion, unchanged blockers or resource
-limits stop a lane early. Extending the calendar does not override these gates.
+Free workers may run 24/7 without a calendar expiry. Completion, unchanged
+blockers or resource limits still stop a lane. Continuous availability does not
+override these gates or permit busywork after an assigned goal is finished.

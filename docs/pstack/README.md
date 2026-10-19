@@ -54,8 +54,9 @@ but worker-controlled receipts still require independent maintainer checks.
 
 ## Deliberate adaptations
 
-- Existing DeepSeek-V4.1-Flash-1017/max, off-peak schedule and seven-day bound
-  remain authoritative. Senior review remains at most two attempts per day.
+- DeepSeek-V4.1-Flash-1017 uses the OpenCode free route at max effort, around
+  the clock without a calendar expiry. Goal and resource limits still apply.
+  Senior review allows at most ten attempts per Auckland day, two hours apart.
 - Cursor Task/arena/swarm panels, model defaults, /loop, Bugbot, Slack
   automations and automatic shipping are not installed. Existing workers,
   timer and GitHub publisher supply the authorized orchestration.

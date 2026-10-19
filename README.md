@@ -1,8 +1,10 @@
 # iphone4-linux
 
-A minimal native Linux terminal system for the iPhone 4, starting with the
-original GSM N90AP (iPhone3,1). This is a bring-up project, not an installable
-phone distribution. No phone has been tested by this project yet.
+AI-native Linux for the iPhone 4. Turn an old phone into a tiny Linux box
+you can SSH into.
+
+We’re starting with the original GSM N90AP (iPhone3,1). The project is still
+being built; there is no phone-tested installer yet.
 
 The intended system has a Linux kernel, file I/O, SSH, basic CLI tools and a
 small TUI. Wi-Fi, touch and persistent phone storage are later hardware gates.
@@ -20,11 +22,12 @@ Three independent OpenCode workers are assigned [goals](goals/README.md):
 2. **kernel**: pinned iPhone kernel cross-build and a RAM-rootfs artifact.
 3. **drivers**: evidence-based Wi-Fi, touch and storage bring-up work.
 
-Workers use **DeepSeek-V4.1-Flash-1017** through the official API alias
-`deepseek/deepseek-flash`, always at the highest available effort (`max`).
-[DeepSeek documents this alias](https://api-docs.deepseek.com/).
-The separately named OpenCode free model is not substituted. There is no paid
-model fallback. This official API route may incur charges.
+Workers use **DeepSeek-V4.1-Flash-1017** through
+`opencode/deepseek-v4.1-flash-free`, at the highest effort (`max`).
+[OpenCode announced the free route's 1017 update on 20 October](https://x.com/opencode/status/2112220734768779441).
+The live catalog confirms zero input, output and cache prices and the `max`
+variant. It still uses the generic Free name and an older release date, so the
+1017 version attribution comes from that announcement. There is no paid fallback.
 
 Each worker has a separate local checkout. Results require review before they
 are merged or published. A worker's completion note is a claim, not a hardware
@@ -32,7 +35,8 @@ test. See [worker rules](AGENTS.md), [milestones](goals/README.md), and
 [source evidence](docs/sources.md).
 
 [The review workflow](docs/agent-workflow.md) adds GitHub goal issues and at most
-two event-triggered senior reviews per day; DeepSeek continues the implementation.
+ten event-triggered senior reviews per Auckland day, at least two hours apart.
+DeepSeek continues the implementation.
 
 [pstack is installed locally](docs/pstack/README.md) with `/poteto-mode` and
 `/verify-iphone4`. `/goals` uses its bounded investigation/build workflow and
@@ -59,19 +63,21 @@ There are no prebuilt images in this initial scaffold.
 
 ## Long-running work
 
-The local supervisor runs for at most seven days, with separate visible OpenCode
+The local supervisor can run around the clock, with separate visible OpenCode
 sessions, periodic checkpoints, backoff on errors, and an explicit stop on
 completion, an unchanged blocker, or a resource limit. It never flashes a phone,
 pushes Git, changes credentials, or calls other models. Local state and logs are
 ignored by Git. `/goals NAME` is a project command; this OpenCode version has no
 native persistent goals API. The supervisor supplies the continuation loop.
 
-Paid inference runs only off-peak: UTC weekdays outside 01:00–04:00 and
-06:00–10:00; UTC weekends all day. Workers stop five minutes before peak hours
-and resume after them. Chinese public holiday exceptions are conservatively
-ignored. These are the [official rates and schedule](https://api-docs.deepseek.com/quick_start/pricing/)
-verified on 2026-10-19. This is a seven-day schedule snapshot, not a permanent
-promise about the provider's future prices. Laptop sleep pauses local work.
+Free workers have no time-of-day restriction or calendar expiry. The supervisor
+checks the exact route, `max` support and zero prices before dispatching work;
+an independent watchdog checks every minute and stops active workers if those
+checks fail or a session changes model. Soyclaw reports that condition. This
+checks OpenCode's advertised prices; it cannot independently audit provider billing.
+The existing goal, retry, resource and 96-cycle limits still apply. Completed
+work waits for review instead of generating busywork. Laptop sleep, shutdown
+or loss of connectivity pauses local work.
 
 Start: `python3 harness/control.py start`
 

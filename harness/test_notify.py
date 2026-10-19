@@ -1,6 +1,5 @@
 """User-visible alert contracts; guest boot tests cannot cover Telegram delivery."""
 import unittest
-from datetime import datetime, timezone
 import json
 from pathlib import Path
 import tempfile
@@ -71,11 +70,12 @@ class CriticalAlerts(unittest.TestCase):
             events = notify.critical_events({'deadline': 1000, 'workers': []}, records, {}, 10)
             self.assertEqual([e['key'] for e in events], ['review-failed'])
 
-    def test_normal_cutoff_grace_does_not_page_but_late_work_does(self):
-        # The notifier and normal minute watchdog can run at the same boundary.
-        for hour, minute, expected in [(0, 55, False), (1, 0, True), (4, 0, False)]:
-            now = datetime(2026, 10, 20, hour, minute, tzinfo=timezone.utc).timestamp()
-            self.assertEqual(notify.past_cutoff(now), expected)
+    def test_ongoing_run_does_not_report_expiry_but_explicit_deadline_does(self):
+        # Continuous operation must neither crash the monitor nor page weekly.
+        cfg = {'deadline': None, 'workers': []}
+        self.assertEqual(notify.critical_events(cfg, [], {}, 10**10), [])
+        cfg['deadline'] = 100
+        self.assertEqual(notify.critical_events(cfg, [], {}, 100)[0]['key'], 'run-ended')
 
 
 if __name__ == '__main__':

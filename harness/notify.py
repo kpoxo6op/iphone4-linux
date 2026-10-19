@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Quiet critical-event monitor; send fixed reports through the existing Soyclaw bot."""
 import argparse
-from datetime import datetime, timedelta, timezone
 import fcntl
 import hashlib
 import json
@@ -26,12 +25,6 @@ def event(key, text, action, lane=None):
     return {'key': key, 'message': f'iPhone Linux\n\n{text}\n\n{action}\n{url}'}
 
 
-def past_cutoff(now):
-    moment = datetime.fromtimestamp(now, timezone.utc)
-    # Let the minute watchdog perform its normal buffered cutoff before paging.
-    return not control.off_peak(moment) and not control.off_peak(moment - timedelta(minutes=2))
-
-
 def review_records():
     records = []
     for path in (control.STATE / 'reviews').glob('20*.json'):
@@ -53,7 +46,7 @@ def review_records():
 
 def critical_events(cfg, records, health, now):
     events = []
-    if now >= cfg['deadline']:
+    if control.expired(cfg, now):
         return [event('run-ended', 'The scheduled run window has ended.',
                       'A new run window is needed to continue.')]
     for worker in cfg['workers']:
@@ -172,7 +165,7 @@ def check(test=False):
             return
         now = time.time()
         records = review_records()
-        health = {'cost watchdog': unit_health(control.UNIT + '-gate.timer'),
+        health = {'free-model watchdog': unit_health(control.UNIT + '-gate.timer'),
                   'review timer': unit_health('iphone4-linux-review.timer')}
         events = critical_events(cfg, records, health, now)
         expected = any(w.get('state') not in ('awaiting_review', 'blocked', 'stopped', 'limit')
@@ -187,10 +180,13 @@ def check(test=False):
             if now - last['started'] > 1800 and not any(r['id'] == last['id'] for r in records):
                 events.append(event('review-lost', 'The last senior review never recorded a result.',
                                     'The review process needs a maintainer check before it is retried.'))
-        # Normal off-peak waits and queued reviews are not incidents. Model drift
-        # or work still running inside the blocked billing window is an incident.
+        # Queued reviews are quiet. A paid/unverifiable route must pause and alert.
         try:
             active = control.api('GET', '/api/session/active')
+            route_error = control.free_route_error()
+            if route_error:
+                events.append(event('free-model-unavailable', route_error,
+                                    'Workers are paused. The maintainer must restore the approved free route; there is no paid fallback.'))
             for worker in cfg['workers']:
                 if worker['session'] not in active:
                     continue
@@ -198,11 +194,12 @@ def check(test=False):
                 if session.get('model') != control.MODEL:
                     control.interrupt(worker)
                     events.append(event('model:' + worker['name'], 'A worker selected an unapproved model or effort. It was interrupted.',
-                                        'The maintainer must restore DeepSeek 1017 at max effort.', worker['name']))
-                if past_cutoff(now) or now >= cfg['deadline']:
+                                        'The maintainer must restore free DeepSeek 1017 at max effort.', worker['name']))
+                if route_error or control.expired(cfg, now):
                     control.interrupt(worker)
-                    events.append(event('billing:' + worker['name'], 'A worker was still active outside the allowed run window. It was interrupted.',
-                                        'The cost controls need a maintainer check.', worker['name']))
+                    if control.expired(cfg, now):
+                        events.append(event('billing:' + worker['name'], 'A worker was still active past the configured deadline. It was interrupted.',
+                                            'The run controls need a maintainer check.', worker['name']))
             state['api_failures'] = 0
         except Exception:
             state['api_failures'] = state.get('api_failures', 0) + 1

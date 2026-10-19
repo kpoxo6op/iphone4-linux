@@ -8,15 +8,16 @@ It reports:
 
 - A worker exhausting its resource or API-retry limit.
 - A senior review failing, losing its result, or having an uncertain GitHub post.
-- A stopped supervisor, review timer or cost watchdog while the project is enabled.
-- An active worker using the wrong model/effort or running outside its allowed
-  window. The monitor interrupts that worker as well as reporting it.
+- A stopped supervisor, review timer or free-model watchdog while the project is enabled.
+- An unavailable free route, missing max effort, or changed/unknown prices.
+  Active workers are interrupted; there is no paid fallback.
+- An active worker using the wrong model/effort. It is interrupted too.
 - Three consecutive failures to check OpenCode.
 - A specific decision or access requirement the senior reviewer assigns to Boris.
-- The seven-day run ending.
+- An explicitly configured deadline ending (the ongoing run has none).
 
 Every message names the problem, the next action and the relevant GitHub issue.
-Normal compilation, queued reviews, off-peak waits, routine fixes and the
+Normal compilation, queued reviews, routine fixes and the
 already-known missing phone cable stay quiet. A request for a human decision
 must name a concrete action and put the affected goal on hold. Workers cannot
 send arbitrary messages or choose a recipient.

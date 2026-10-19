@@ -5,6 +5,13 @@ V4.1 Flash 1017 at max effort implements in isolated checkouts. GitHub issues
 carry goals, evidence checkpoints and decisions. Workers have no GitHub
 credentials and cannot merge their own work.
 
+The built-in OpenCode `build` agent keeps its standard prompt and tool schema.
+Only the sandboxed shell and public web tools are pre-approved. Other tools
+require approval; the supervisor rejects those requests automatically for these
+sessions. It never enables `--auto`. A live permission check confirmed that a
+direct file edit asks and is rejected. A free/max shell call succeeded at $0 on
+20 October 2026; the earlier blanket tool-deny profile returned FreeTierError.
+
 The [pstack adaptation](pstack/README.md) supplies the worker playbook, feature
 verification map and input-bound QEMU receipts. It reuses this review loop.
 
@@ -34,15 +41,17 @@ required test instrument; source-only checks cannot certify drivers.
    completion or blocker note. No automatic merge or hardware success claim.
 3. A deterministic timer watches completion, blockers or six-hour stale work.
    Ordinary build waits do not justify repeated expensive review calls.
-4. At most **two senior review attempts per Auckland calendar day**, at least
-   six hours apart, review bounded packets. No new evidence/event means no call.
-   Failures also consume a slot. The seven-day deadline and off-peak window apply.
+4. Every 15 minutes the timer checks for new evidence. At most **ten senior review
+   attempts per Auckland calendar day**, at least two hours apart, review bounded
+   packets. No new evidence/event means no call.
+   Failures also consume a slot. There is no time-of-day restriction or calendar
+   expiry; unchanged packets do not consume more reviews.
 5. GPT-6 Astra uses **ultra**, its highest locally advertised effort. Shell,
    multi-agent, web and configured MCP access are disabled. It reviews supplied
    evidence only and returns `changes_requested`, `hold`, `continue`, or
    `ready_for_manual_merge`. Missing evidence prevents acceptance.
 6. The publisher posts validated decisions on assigned GitHub issues and writes
-   feedback for the worker. The off-peak supervisor resumes it with corrections.
+   feedback for the worker. The supervisor resumes the free worker with corrections.
    An ambiguous publication is not blindly resent.
 7. A maintainer reviews the actual diff and independently verifies checks before
    a curated PR/merge. Automatic review is not release or hardware approval.
