@@ -118,13 +118,24 @@ def validate(result):
         raise ValueError('Invalid review count')
     seen = set()
     for review in result['reviews']:
-        if set(review) != {'lane', 'decision', 'findings', 'next_action'}:
+        fields = {'lane', 'decision', 'findings', 'next_action'}
+        if set(review) not in (fields, fields | {'attention', 'user_action'}):
             raise ValueError('Invalid review fields')
         if review['lane'] not in LANES or review['lane'] in seen:
             raise ValueError('Unknown or duplicate lane')
         seen.add(review['lane'])
         if review['decision'] not in DECISIONS:
             raise ValueError('Invalid decision')
+        attention = review.get('attention', 'none')
+        action = review.get('user_action', '')
+        if attention not in ('none', 'user') or not isinstance(action, str):
+            raise ValueError('Invalid attention request')
+        if len(action) > 400 or SENSITIVE.search(action):
+            raise ValueError('Unsafe attention request')
+        if attention == 'user' and (review['decision'] != 'hold' or not action.strip()):
+            raise ValueError('User attention requires a held goal and a concrete action')
+        if attention == 'none' and action:
+            raise ValueError('No-action review cannot request user action')
         if not isinstance(review['findings'], list) or len(review['findings']) > 5:
             raise ValueError('Too many findings')
         for value in review['findings'] + [review['next_action']]:
@@ -193,8 +204,10 @@ def run_review():
             'type': 'object', 'properties': {'lane': {'type': 'string', 'enum': list(LANES)},
             'decision': {'type': 'string', 'enum': list(DECISIONS)},
             'findings': {'type': 'array', 'items': {'type': 'string'}},
-            'next_action': {'type': 'string'}},
-            'required': ['lane', 'decision', 'findings', 'next_action'],
+            'next_action': {'type': 'string'},
+            'attention': {'type': 'string', 'enum': ['none', 'user']},
+            'user_action': {'type': 'string'}},
+            'required': ['lane', 'decision', 'findings', 'next_action', 'attention', 'user_action'],
             'additionalProperties': False}}}, 'required': ['reviews'], 'additionalProperties': False}
         schemafile = DATA / 'schema.json'
         atomic(schemafile, schema)
@@ -222,6 +235,14 @@ def run_review():
                   'stale artifacts; require proof for the tested input hashes; reject tests '
                   'that restate implementation; prefer the smallest sufficient change. '
                   'Receipts are worker-controlled evidence, not independent acceptance.\n\n' +
+                  'Set attention=none and user_action="" for ordinary progress, fixes, '
+                  'review queues and the already-known absence of the phone cable. '
+                  'Only use attention=user with decision=hold when Boris must supply '
+                  'a specific missing credential/access, approve an irreversible action, '
+                  'or make a product decision the agents cannot settle. State the exact '
+                  'action in at most 400 characters. Never ask him to babysit, check logs, '
+                  'repeat tests, or do routine maintainer integration. Do not include '
+                  'credentials, private endpoints or shell commands in that field.\n\n' +
                   json.dumps(packet))
         review_cwd = ROOT.parent / 'iphone4-linux-reviews'
         review_cwd.mkdir(exist_ok=True)

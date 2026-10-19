@@ -59,6 +59,13 @@ def tick(cfg):
             w['state'] = 'pending'
             w['next_run'] = 0
             w['unchanged'] = 0
+        if new_feedback and feedback.get('decision') == 'hold':
+            if w['session'] in active_ids:
+                interrupt(w)
+            w.update(state='blocked', reason=feedback.get('next_action', 'Senior review hold'),
+                     feedback_seen=feedback['id'])
+            save(cfg)
+            continue
         if w.get('state') in ('awaiting_review', 'blocked', 'stopped', 'limit'):
             continue
         try:
@@ -167,7 +174,8 @@ def main():
     elif a.command == 'stop':
         sp.run(['systemctl', '--user', 'disable', '--now', UNIT,
                 UNIT + '-gate.timer', 'iphone4-linux-review.timer',
-                'iphone4-linux-review.service'], check=False)
+                'iphone4-linux-review.service', 'iphone4-linux-notify.timer',
+                'iphone4-linux-notify.service'], check=False)
         for w in cfg['workers']:
             interrupt(w)
             w['state'] = 'stopped'
@@ -191,6 +199,9 @@ def main():
         sp.run(['systemctl', '--user', 'daemon-reload'], check=True)
         sp.run(['systemctl', '--user', 'enable', '--now', UNIT,
                 UNIT + '-gate.timer'], check=True)
+        if (STATE / 'notifications/config.json').exists():
+            sp.run(['systemctl', '--user', 'enable', '--now',
+                    'iphone4-linux-notify.timer'], check=True)
     else:
         while time.time() < cfg['deadline']:
             tick(cfg)

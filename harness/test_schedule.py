@@ -48,6 +48,20 @@ class BillingWindow(unittest.TestCase):
                 api.assert_called_once_with('GET', '/api/session/active')
                 self.assertEqual(cfg['workers'][0]['state'], 'waiting_off_peak')
 
+    def test_review_hold_stops_the_assigned_active_worker(self):
+        # A notification saying a decision is needed must not leave work running.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / '.opencode').mkdir()
+            (root / '.opencode/review-feedback.json').write_text(json.dumps({
+                'id': 'hold', 'decision': 'hold', 'next_action': 'A decision is needed'}))
+            worker = {'name': 'qemu', 'path': str(root), 'session': 'ours', 'state': 'running'}
+            with patch.object(control, 'api', return_value={'ours': {}, 'unrelated': {}}), \
+                 patch.object(control, 'interrupt') as interrupt, patch.object(control, 'save'):
+                control.tick({'workers': [worker]})
+                interrupt.assert_called_once_with(worker)
+                self.assertEqual(worker['state'], 'blocked')
+
 
 if __name__ == '__main__':
     unittest.main()

@@ -64,3 +64,10 @@ Control: `python3 harness/control.py status|stop`. Review timer:
 `systemctl --user status iphone4-linux-review.timer`. Private records live in
 `.runtime/reviews/`; GitHub holds sanitized decisions. Senior review cannot
 enroll a tailnet, flash a phone, push worker code or execute experiments.
+
+The [Soyclaw alert monitor](alerts.md) reports critical failures and explicit
+owner decisions. A reviewer sets `attention: user` only with `decision: hold`
+and a concrete `user_action`. Routine fixes and the known lack of a cable do
+not qualify. The supervisor stops a held lane; the notifier uses a fixed
+private recipient. It runs without another model call and does not consume a
+senior-review slot.

@@ -38,6 +38,9 @@ two event-triggered senior reviews per day; DeepSeek continues the implementatio
 `/verify-iphone4`. `/goals` uses its bounded investigation/build workflow and
 feature verification map automatically.
 
+[Critical alerts go through Soyclaw](docs/alerts.md). Routine work stays quiet;
+failures and specific decisions reach the owner's private Telegram chat.
+
 ## Minimal acceptance harness
 
 `python3 harness/verify.py doctor --images PATH` checks prerequisites.
