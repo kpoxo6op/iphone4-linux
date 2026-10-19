@@ -77,6 +77,10 @@ def collect(cfg):
                 'goal': read_text(ROOT, f'goals/{name}.md'),
                 'notes': read_text(root, 'notes/GOAL.md', 7500, tail=True),
                 'files': {}, 'omitted': [], 'artifacts': {}, 'logs': {}}
+        receipts = sorted((root / 'output/verification').glob('*/receipt.json'))
+        if receipts:
+            lane['verification_receipt'] = read_text(
+                root, str(receipts[-1].relative_to(root)), 5000)
         listing = sp.run(['git', 'ls-files', '-co', '--exclude-standard', '-z'],
                         cwd=root, capture_output=True, check=True).stdout.decode().split('\0')
         budget = 26000
@@ -211,7 +215,13 @@ def run_review():
                   'full independent diff review and tests; never approve a hardware gate. '
                   'hold means a real external blocker. Use changes_requested for fixable '
                   'defects, continue for useful progress. Packet may list omitted/truncated '
-                  'files: disclose material evidence gaps, never invent their contents.\n\n' +
+                  'files: disclose material evidence gaps, never invent their contents. '
+                  'Apply these pstack review lenses within this supplied packet: trace a '
+                  'finding through the actual failure path; distinguish a root-cause fix '
+                  'from retries that hide it; check failure propagation, repeated runs and '
+                  'stale artifacts; require proof for the tested input hashes; reject tests '
+                  'that restate implementation; prefer the smallest sufficient change. '
+                  'Receipts are worker-controlled evidence, not independent acceptance.\n\n' +
                   json.dumps(packet))
         review_cwd = ROOT.parent / 'iphone4-linux-reviews'
         review_cwd.mkdir(exist_ok=True)

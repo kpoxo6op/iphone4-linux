@@ -34,7 +34,15 @@ test. See [worker rules](AGENTS.md), [milestones](goals/README.md), and
 [The review workflow](docs/agent-workflow.md) adds GitHub goal issues and at most
 two event-triggered senior reviews per day; DeepSeek continues the implementation.
 
+[pstack is installed locally](docs/pstack/README.md) with `/poteto-mode` and
+`/verify-iphone4`. `/goals` uses its bounded investigation/build workflow and
+feature verification map automatically.
+
 ## Minimal acceptance harness
+
+`python3 harness/verify.py doctor --images PATH` checks prerequisites.
+`python3 harness/verify.py qemu --images PATH` runs the smoke test below against
+snapshotted images and retains a unique receipt with image hashes and logs.
 
 `python3 harness/qemu_smoke.py --images PATH` boots real ARM artifacts in QEMU,
 injects a fresh SSH public key into a disposable rootfs copy, checks authenticated

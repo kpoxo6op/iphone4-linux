@@ -5,6 +5,9 @@ V4.1 Flash 1017 at max effort implements in isolated checkouts. GitHub issues
 carry goals, evidence checkpoints and decisions. Workers have no GitHub
 credentials and cannot merge their own work.
 
+The [pstack adaptation](pstack/README.md) supplies the worker playbook, feature
+verification map and input-bound QEMU receipts. It reuses this review loop.
+
 ## Research applied
 
 - [Anthropic, November 2025](https://www.anthropic.com/engineering/effective-harnesses-for-long-running-agents):

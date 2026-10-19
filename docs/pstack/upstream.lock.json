@@ -1,0 +1,43 @@
+{
+  "repository": "https://github.com/cursor/plugins",
+  "revision": "d457567332aa6989e753ea289f30ea2bfbc80bc0",
+  "license": "MIT; Copyright (c) 2026 Lauren Tan",
+  "files": {
+    ".opencode/skills/principle-attack-the-premise/SKILL.md": {
+      "upstream": "pstack/skills/principle-attack-the-premise/SKILL.md",
+      "sha256": "6a932884daad4aa189e9b5d1665226bbc75621d4d2a398fd4003bebd382f4599"
+    },
+    ".opencode/skills/principle-build-the-lever/SKILL.md": {
+      "upstream": "pstack/skills/principle-build-the-lever/SKILL.md",
+      "sha256": "3434b0ad0c640c6f1d7960be7a8986c3bcdc14e26060360dec29903df60074ff"
+    },
+    ".opencode/skills/principle-encode-lessons-in-structure/SKILL.md": {
+      "upstream": "pstack/skills/principle-encode-lessons-in-structure/SKILL.md",
+      "sha256": "228963799189f481827d6f28065f278bc2008ffa37030b1234cbd5814d36b9e9"
+    },
+    ".opencode/skills/principle-fix-root-causes/SKILL.md": {
+      "upstream": "pstack/skills/principle-fix-root-causes/SKILL.md",
+      "sha256": "8df3c8c3fe57eb0055a5c8efab8ab144557fdf301da70b1cdc77a3a3ef3f3052"
+    },
+    ".opencode/skills/principle-laziness-protocol/SKILL.md": {
+      "upstream": "pstack/skills/principle-laziness-protocol/SKILL.md",
+      "sha256": "1be6e7a435f26a75a76eb848b9c3d611b9977d0f5822361753244da25ca3ca45"
+    },
+    ".opencode/skills/principle-prove-it-works/SKILL.md": {
+      "upstream": "pstack/skills/principle-prove-it-works/SKILL.md",
+      "sha256": "ec79a15025bac8d33d62011c54f3b612733fd2a024e623b531b3637aa75070e2"
+    },
+    ".opencode/skills/principle-redesign-from-first-principles/SKILL.md": {
+      "upstream": "pstack/skills/principle-redesign-from-first-principles/SKILL.md",
+      "sha256": "170e0a658783e43fee8ec5a8c2422a4abb8f69cef621dd1819a95910b8207034"
+    },
+    ".opencode/skills/principle-sequence-verifiable-units/SKILL.md": {
+      "upstream": "pstack/skills/principle-sequence-verifiable-units/SKILL.md",
+      "sha256": "2ccbbacc56ace5afdfb8670cef19d7bd009fb2a0033b9a741cbdf2b6baf72187"
+    },
+    ".opencode/skills/principle-test-behavior-not-implementation/SKILL.md": {
+      "upstream": "pstack/skills/principle-test-behavior-not-implementation/SKILL.md",
+      "sha256": "f7223698623b6a26fea49c751e466b38e6691b1f32ce841d3983e7ffbe2b74a6"
+    }
+  }
+}

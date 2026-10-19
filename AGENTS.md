@@ -1,6 +1,9 @@
 # Worker contract
 
 Read your assigned goal before writing code. Work only in your assigned checkout.
+Use .opencode/skills/pstack-iphone/SKILL.md for each goal cycle and its
+verify-iphone4 feature map for evidence. These are project-local pstack
+adaptations; this contract and the supervisor's limits take precedence.
 Use the shell tool for files and commands; it is wrapped by the maintainer's
 filesystem sandbox. Do not bypass it or change OpenCode configuration, this
 contract, goal definitions, or the acceptance harness. The original acceptance

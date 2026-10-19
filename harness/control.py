@@ -114,6 +114,7 @@ def tick(cfg):
             w['digest'] = digest
             api('POST', f"/api/session/{w['session']}/model", {'model': MODEL}, w['path'])
             prompt = (f"Continue /goals {w['name']}. Read AGENTS.md, goals/{w['name']}.md, "
+                      '.opencode/skills/pstack-iphone/SKILL.md, '
                       'and notes/GOAL.md if present using the shell tool. Work on the next concrete '
                       'experiment. Write notes/GOAL.md and notes/status.json before ending. '
                       'If complete set ready_for_review, never claim reviewer acceptance. '
