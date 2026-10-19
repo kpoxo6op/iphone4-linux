@@ -1,5 +1,8 @@
 """Cost-boundary tests; QEMU cannot exercise the host's inference scheduler."""
 from datetime import datetime, timezone
+import json
+from pathlib import Path
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -28,6 +31,22 @@ class BillingWindow(unittest.TestCase):
              patch.object(control, 'interrupt') as stop:
             control.gate(cfg)
             stop.assert_called_once_with(cfg['workers'][0])
+
+    def test_review_feedback_cannot_start_inference_during_peak(self):
+        # A new correction must not bypass the cost boundary while a lane waits.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / '.opencode').mkdir()
+            (root / '.opencode/review-feedback.json').write_text(json.dumps({
+                'id': 'new-review', 'decision': 'changes_requested'}))
+            cfg = {'workers': [{'name': 'qemu', 'path': str(root),
+                                 'session': 'ours', 'state': 'awaiting_review'}]}
+            with patch.object(control, 'off_peak', return_value=False), \
+                 patch.object(control, 'api', return_value={}) as api, \
+                 patch.object(control, 'save'):
+                control.tick(cfg)
+                api.assert_called_once_with('GET', '/api/session/active')
+                self.assertEqual(cfg['workers'][0]['state'], 'waiting_off_peak')
 
 
 if __name__ == '__main__':

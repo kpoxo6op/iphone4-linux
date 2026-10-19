@@ -19,7 +19,8 @@ REPO = 'kpoxo6op/iphone4-linux'
 LANES = ('qemu', 'kernel', 'drivers')
 DECISIONS = ('continue', 'changes_requested', 'hold', 'ready_for_manual_merge')
 SENSITIVE = re.compile(r'-----BEGIN .*PRIVATE KEY|tskey-[A-Za-z0-9_-]+|'
-                       r'gh[pousr]_[A-Za-z0-9]{20,}|Bearer\s+[A-Za-z0-9._-]{20,}')
+                       r'gh[pousr]_[A-Za-z0-9]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|'
+                       r'Bearer\s+[A-Za-z0-9._-]{20,}')
 OWNED = {
     'qemu': ('br2-external/', 'tools/', 'notes/', 'build.sh', 'README.qemu.md'),
     'kernel': ('phone/', 'notes/', 'docs/'),
@@ -79,7 +80,10 @@ def collect(cfg):
         listing = sp.run(['git', 'ls-files', '-co', '--exclude-standard', '-z'],
                         cwd=root, capture_output=True, check=True).stdout.decode().split('\0')
         budget = 26000
-        for file in sorted(set(listing)):
+        def priority(file):
+            source = Path(file).suffix in ('.py', '.sh', '.c', '.h', '.dts', '.defconfig')
+            return (not source, file.startswith('research/generated/'), file)
+        for file in sorted(set(listing), key=priority):
             if not any(file == prefix or file.startswith(prefix) for prefix in OWNED[name]):
                 continue
             if file.startswith('notes/') or file.endswith(('.pyc', '.png', '.tgz', '.tar.gz')):
@@ -150,6 +154,13 @@ def publish(result, record, cfg):
         atomic(DATA / f"{record['id']}.json", record)
         feedback = dict(review, id=record['id'], issue=mapping['issues'][lane]['url'])
         atomic(Path(worker['path']) / '.opencode/review-feedback.json', feedback)
+    if any(r['decision'] in ('continue', 'changes_requested') for r in result['reviews']):
+        # The worker loop exits when all lanes await review. Wake it only if the
+        # user has left the project enabled; an explicit stop disables this unit.
+        enabled = sp.run(['systemctl', '--user', 'is-enabled', control.UNIT],
+                         capture_output=True, text=True)
+        if enabled.returncode == 0:
+            sp.run(['systemctl', '--user', 'start', control.UNIT], check=True)
 
 
 def run_review():
