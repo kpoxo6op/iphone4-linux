@@ -8,6 +8,10 @@ The intended system has a Linux kernel, file I/O, SSH, basic CLI tools and a
 small TUI. Wi-Fi, touch and persistent phone storage are later hardware gates.
 QEMU validates ARM userspace; it does not emulate the iPhone's peripherals.
 
+**The main product milestone is [Tailscale + SSH on the phone](goals/remote-access.md).**
+This enables remote development for the rest of bring-up. USB-shared Internet
+can come first; touch and Wi-Fi do not block the initial tailnet path.
+
 ## Current work
 
 Three independent OpenCode workers are assigned [goals](goals/README.md):
@@ -26,6 +30,9 @@ Each worker has a separate local checkout. Results require review before they
 are merged or published. A worker's completion note is a claim, not a hardware
 test. See [worker rules](AGENTS.md), [milestones](goals/README.md), and
 [source evidence](docs/sources.md).
+
+[The review workflow](docs/agent-workflow.md) adds GitHub goal issues and at most
+two event-triggered senior reviews per day; DeepSeek continues the implementation.
 
 ## Minimal acceptance harness
 

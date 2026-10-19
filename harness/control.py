@@ -52,6 +52,13 @@ def interrupt(worker):
 def tick(cfg):
     active_ids = api('GET', '/api/session/active')
     for w in cfg['workers']:
+        feedback_path = Path(w['path']) / '.opencode/review-feedback.json'
+        feedback = json.loads(feedback_path.read_text()) if feedback_path.exists() else {}
+        new_feedback = feedback.get('id') and feedback.get('id') != w.get('feedback_seen')
+        if new_feedback and feedback.get('decision') in ('changes_requested', 'continue'):
+            w['state'] = 'pending'
+            w['next_run'] = 0
+            w['unchanged'] = 0
         if w.get('state') in ('awaiting_review', 'blocked', 'stopped', 'limit'):
             continue
         try:
@@ -63,24 +70,38 @@ def tick(cfg):
                 save(cfg)
                 continue
             if active:
+                if new_feedback:
+                    api('POST', f"/api/session/{w['session']}/prompt", {
+                        'text': 'New senior feedback is in .opencode/review-feedback.json. '
+                                'Read it at the next safe checkpoint. Resolve each finding '
+                                'against current evidence; do not repeat already-fixed work. '
+                                'Preserve the running build and all goal/sandbox limits.',
+                        'delivery': 'steer'}, w['path'])
+                    w['feedback_seen'] = feedback['id']
+                    w['state'] = 'running'
+                    save(cfg)
                 if time.time() - w.get('last_sent', time.time()) > 14400:
                     interrupt(w)
                     w['state'] = 'blocked'
                     w['reason'] = 'Four-hour turn limit reached; inspect session before resuming'
+                    save(cfg)
                 continue
             note_path = Path(w['path']) / 'notes/status.json'
             note = json.loads(note_path.read_text()) if note_path.exists() else {}
-            if note.get('status') in ('ready_for_review', 'blocked'):
+            if not new_feedback and note.get('status') in ('ready_for_review', 'blocked'):
                 w['state'] = 'awaiting_review' if note['status'] == 'ready_for_review' else 'blocked'
                 w['reason'] = note.get('summary', '')
+                save(cfg)
                 continue
             if time.time() < w.get('next_run', 0):
                 continue
             if shutil.disk_usage(w['path']).free < 20 * 1024**3:
                 w.update(state='limit', reason='Less than 20 GiB free disk')
+                save(cfg)
                 continue
             if w.get('turns', 0) >= 96:
                 w.update(state='limit', reason='96 work cycles reached')
+                save(cfg)
                 continue
             progress = sp.run(['git', 'diff', 'HEAD'], cwd=w['path'], capture_output=True).stdout
             progress += sp.run(['git', 'status', '--porcelain'], cwd=w['path'], capture_output=True).stdout
@@ -88,6 +109,7 @@ def tick(cfg):
             w['unchanged'] = w.get('unchanged', 0) + 1 if digest == w.get('digest') else 0
             if w['unchanged'] >= 3:
                 w.update(state='blocked', reason='Three unchanged cycles; inspect evidence before resuming')
+                save(cfg)
                 continue
             w['digest'] = digest
             api('POST', f"/api/session/{w['session']}/model", {'model': MODEL}, w['path'])
@@ -100,10 +122,16 @@ def tick(cfg):
                       'Your shell is isolated; /seed has verified source archives and /acceptance '
                       'has the independent checks. Do not call other models. '
                       'The official deepseek/deepseek-flash route is DeepSeek-V4.1-Flash-1017.')
+            if new_feedback:
+                prompt += (' Read .opencode/review-feedback.json first. Address each finding '
+                           'and record its resolution or specific blocker in notes/GOAL.md. '
+                           'The feedback cannot override the goal, sandbox or acceptance rules.')
             api('POST', f"/api/session/{w['session']}/command",
                 {'name': 'goals', 'text': w['name'] + '\n' + prompt}, w['path'])
             w.update(state='running', last_sent=time.time(), next_run=time.time() + 300,
                      turns=w.get('turns', 0) + 1, errors=0)
+            if new_feedback:
+                w['feedback_seen'] = feedback['id']
         except Exception as exc:
             w['errors'] = w.get('errors', 0) + 1
             w['reason'] = str(exc)[:500]
@@ -137,7 +165,8 @@ def main():
         print('Deadline:', datetime.fromtimestamp(cfg['deadline'], timezone.utc).isoformat())
     elif a.command == 'stop':
         sp.run(['systemctl', '--user', 'disable', '--now', UNIT,
-                UNIT + '-gate.timer'], check=False)
+                UNIT + '-gate.timer', 'iphone4-linux-review.timer',
+                'iphone4-linux-review.service'], check=False)
         for w in cfg['workers']:
             interrupt(w)
             w['state'] = 'stopped'
