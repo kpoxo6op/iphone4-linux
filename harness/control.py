@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import shutil
 import subprocess as sp
+import tempfile
 import time
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -50,10 +51,16 @@ def api(method, path, body=None, cwd=ROOT):
     args = ['opencode', 'api', method, path]
     if body is not None:
         args += ['--data', json.dumps(body)]
-    r = sp.run(args, cwd=cwd, text=True, capture_output=True, timeout=60, check=True)
-    if not r.stdout.strip():
+    # OpenCode can exit before a piped stdout buffer drains (observed at 32 KiB).
+    # A private regular file preserves the full JSON response.
+    with tempfile.TemporaryFile(mode='w+') as output:
+        sp.run(args, cwd=cwd, text=True, stdout=output, stderr=sp.PIPE,
+               timeout=60, check=True)
+        output.seek(0)
+        raw = output.read()
+    if not raw.strip():
         return None
-    j = json.loads(r.stdout)
+    j = json.loads(raw)
     return j.get('data', j) if isinstance(j, dict) else j
 
 
@@ -146,9 +153,9 @@ def tick(cfg):
                 continue
             if w.get('state') == 'running':
                 session = api('GET', '/api/session/' + w['session'])
-                if session.get('outcome') == 'failed':
+                if session.get('outcome') in ('failed', 'interrupted'):
                     w['state'] = 'retry'
-                    raise RuntimeError('OpenCode worker turn failed; previous completion notes are stale')
+                    raise RuntimeError('OpenCode worker turn did not finish; previous completion notes are stale')
                 if session.get('outcome') == 'succeeded':
                     w['errors'] = 0
             note_path = Path(w['path']) / 'notes/status.json'

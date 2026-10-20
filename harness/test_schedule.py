@@ -85,15 +85,20 @@ class FreeWorkers(unittest.TestCase):
                 interrupt.assert_called_once_with(worker)
                 self.assertEqual(worker['state'], 'blocked')
 
-    def test_failed_generation_cannot_reuse_an_old_completion_note(self):
-        # A provider failure after dispatch must retry with backoff, not look complete.
+    def test_unfinished_generation_cannot_reuse_an_old_completion_note(self):
+        # Failure or a watchdog interruption must retry, not accept stale notes.
+        for outcome in ('failed', 'interrupted'):
+            with self.subTest(outcome=outcome):
+                self.check_unfinished_generation(outcome)
+
+    def check_unfinished_generation(self, outcome):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
             (root / 'notes').mkdir()
             (root / 'notes/status.json').write_text('{"status":"ready_for_review"}')
             worker = {'name': 'qemu', 'path': temp, 'session': 'ours', 'state': 'running'}
             def api(method, path):
-                return {} if path.endswith('/active') else {'outcome': 'failed'}
+                return {} if path.endswith('/active') else {'outcome': outcome}
             with patch.object(control, 'free_route_error', return_value=None), \
                  patch.object(control, 'api', side_effect=api), patch.object(control, 'save'), \
                  patch.object(control.time, 'time', return_value=100):
