@@ -16,6 +16,9 @@ can come first; touch and Wi-Fi do not block the initial tailnet path.
 
 ## Current work
 
+The cable is here. [First connection to Platt](docs/first-connection.md) covers
+automatic identification and the workers' RAM-boot and remote-access handoff.
+
 Three independent OpenCode workers are assigned [goals](goals/README.md):
 
 1. **qemu**: reproducible ARMv7 image and real boot / SSH / file I/O tests.

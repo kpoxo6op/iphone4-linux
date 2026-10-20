@@ -1,5 +1,8 @@
 # drivers: M5 preparation
 
+Current priority: the drivers assignment in [first connection](cable-day.md).
+USB remote access comes before the peripheral work below.
+
 Investigate concrete gaps between the pinned N90 kernel and usable Wi-Fi/touch.
 Own research/, patches/experimental/, and tools/analysis/. Do not edit the other
 lanes' build configuration. Use public primary source code with immutable refs.

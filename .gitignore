@@ -5,3 +5,5 @@ __pycache__/
 *.pyc
 opencode.local.json
 .playwright-cli/
+.opencode/phone-observation.json
+.opencode/review-feedback.json

@@ -92,6 +92,14 @@ def tick(cfg):
         feedback_path = Path(w['path']) / '.opencode/review-feedback.json'
         feedback = json.loads(feedback_path.read_text()) if feedback_path.exists() else {}
         new_feedback = feedback.get('id') and feedback.get('id') != w.get('feedback_seen')
+        observation_path = Path(w['path']) / '.opencode/phone-observation.json'
+        observation = json.loads(observation_path.read_text()) if observation_path.exists() else {}
+        new_observation = (observation.get('status') != 'no_device' and
+                           observation.get('event_id') and
+                           observation['event_id'] != w.get('observation_seen'))
+        # Arrival adds evidence; keep the sandbox and technical review holds.
+        if new_observation and w.get('state') == 'awaiting_review' and feedback.get('decision') != 'hold':
+            w.update(state='pending', next_run=0, unchanged=0)
         if new_feedback and feedback.get('decision') in ('changes_requested', 'continue'):
             w['state'] = 'pending'
             w['next_run'] = 0
@@ -119,6 +127,16 @@ def tick(cfg):
                     w['feedback_seen'] = feedback['id']
                     w['state'] = 'running'
                     save(cfg)
+                if new_observation:
+                    api('POST', f"/api/session/{w['session']}/prompt", {
+                        'text': 'New sanitized USB/model evidence is in '
+                                '.opencode/phone-observation.json. Read it at the next safe '
+                                'checkpoint and update your goals/cable-day.md handoff. '
+                                'Device work is owner-authorized but maintainer-executed; '
+                                'your offline sandbox still applies.',
+                        'delivery': 'steer'}, w['path'])
+                    w['observation_seen'] = observation['event_id']
+                    save(cfg)
                 if time.time() - w.get('last_sent', time.time()) > 14400:
                     interrupt(w)
                     w['state'] = 'blocked'
@@ -134,7 +152,7 @@ def tick(cfg):
                     w['errors'] = 0
             note_path = Path(w['path']) / 'notes/status.json'
             note = json.loads(note_path.read_text()) if note_path.exists() else {}
-            if not new_feedback and w.get('state') != 'retry' and note.get('status') in ('ready_for_review', 'blocked'):
+            if not new_feedback and not new_observation and w.get('state') != 'retry' and note.get('status') in ('ready_for_review', 'blocked'):
                 w['state'] = 'awaiting_review' if note['status'] == 'ready_for_review' else 'blocked'
                 w['reason'] = note.get('summary', '')
                 save(cfg)
@@ -176,12 +194,19 @@ def tick(cfg):
                 prompt += (' Read .opencode/review-feedback.json first. Address each finding '
                            'and record its resolution or specific blocker in notes/GOAL.md. '
                            'The feedback cannot override the goal, sandbox or acceptance rules.')
+            if new_observation:
+                prompt += (' Read the new .opencode/phone-observation.json. Reconcile the '
+                           'observed model/mode with your goals/cable-day.md handoff. '
+                           'Device work is owner-authorized but maintainer-executed; '
+                           'your offline sandbox still applies.')
             api('POST', f"/api/session/{w['session']}/command",
                 {'name': 'goals', 'text': w['name'] + '\n' + prompt}, w['path'])
             w.update(state='running', last_sent=time.time(), next_run=time.time() + 300,
                      turns=w.get('turns', 0) + 1)
             if new_feedback:
                 w['feedback_seen'] = feedback['id']
+            if new_observation:
+                w['observation_seen'] = observation['event_id']
         except Exception as exc:
             w['errors'] = w.get('errors', 0) + 1
             w['reason'] = str(exc)[:500]
@@ -222,7 +247,8 @@ def main():
         sp.run(['systemctl', '--user', 'disable', '--now', UNIT,
                 UNIT + '-gate.timer', 'iphone4-linux-review.timer',
                 'iphone4-linux-review.service', 'iphone4-linux-notify.timer',
-                'iphone4-linux-notify.service'], check=False)
+                'iphone4-linux-notify.service', 'iphone4-linux-phone.timer',
+                'iphone4-linux-phone.service'], check=False)
         for w in cfg['workers']:
             interrupt(w)
             w['state'] = 'stopped'
@@ -249,6 +275,9 @@ def main():
         if (STATE / 'notifications/config.json').exists():
             sp.run(['systemctl', '--user', 'enable', '--now',
                     'iphone4-linux-notify.timer'], check=True)
+        if (unitdir / 'iphone4-linux-phone.timer').exists():
+            sp.run(['systemctl', '--user', 'enable', '--now',
+                    'iphone4-linux-phone.timer'], check=True)
     else:
         while not expired(cfg):
             tick(cfg)

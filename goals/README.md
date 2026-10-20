@@ -16,6 +16,9 @@ The drivers worker can prepare evidence and compile-tested patches for M5, but
 must stop before claiming hardware works. Stable USB networking should precede
 Wi-Fi; RAM rootfs should precede NAND. Exact phone variant must be confirmed.
 
+The cable is now available. [First-connection assignments](cable-day.md) cover
+model identification, the RAM bootloader and the USB remote-access handoff.
+
 **M4b is the main product milestone.** Run Tailscale on the phone so subsequent
 bring-up can happen remotely. USB-shared Internet can come first; Wi-Fi, touch
 and TUI polish are not prerequisites. Installing binaries alone is not a pass.

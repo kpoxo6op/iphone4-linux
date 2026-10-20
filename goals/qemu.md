@@ -1,5 +1,8 @@
 # qemu: M1 and M2
 
+Current priority: the qemu assignment in [first connection](cable-day.md).
+Keep the M1/M2 image and P0 lifecycle evidence intact while preparing the handoff.
+
 Build a reproducible minimal ARMv7 Linux system using Buildroot 2026.08,
 Cortex-A8-compatible hard-float userspace, and QEMU vexpress-a9. This is NOT
 iPhone emulation. Use the external Bootlin armv7-eabihf musl stable toolchain

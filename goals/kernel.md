@@ -1,5 +1,8 @@
 # kernel: M3
 
+Current priority: the kernel assignment in [first connection](cable-day.md).
+Keep the M3 reproduction and review evidence below as its prerequisite.
+
 Reproducibly cross-compile archeYR/linux at
 8e79d535d2068ae9b9475d2e6850a6edd67fad5b, using s5l8930_defconfig and
 samsung/s5l8930-apple-n90.dtb. This is Linux 6.17-rc1, not latest upstream.

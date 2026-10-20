@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Quiet critical-event monitor; send fixed reports through the existing Soyclaw bot."""
 import argparse
+from datetime import datetime
 import fcntl
 import hashlib
 import json
@@ -147,6 +148,33 @@ def unit_health(unit):
     return enabled, active
 
 
+def phone_events(observation, now):
+    """Only a persistent condition requiring the owner interrupts them."""
+    try:
+        fresh = now - datetime.fromisoformat(observation['checked_at']).timestamp() < 300
+        age = now - datetime.fromisoformat(observation['observed_since']).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return []
+    if not fresh or age < 120:
+        return []
+    actions = {
+        'identity_unavailable': (
+            'Platt sees an Apple mobile device but cannot confirm its model.',
+            'When convenient, unlock the iPhone and reconnect it. No boot or flashing was attempted.'),
+        'other_model': (
+            'The connected phone does not match the current iPhone3,1 / N90AP kernel target.',
+            'Do not try the N90 image. The maintainer needs to adapt the boot plan to this model.'),
+        'multiple_devices': (
+            'Platt sees more than one Apple mobile device; automatic identification stopped.',
+            'Leave only the intended iPhone connected so its model can be checked.'),
+    }
+    status = observation.get('status')
+    if status not in actions:
+        return []
+    text, action = actions[status]
+    return [event('phone:' + status, text, action)]
+
+
 def check(test=False):
     DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (DATA / 'lock').open('w') as lock:
@@ -168,6 +196,16 @@ def check(test=False):
         health = {'free-model watchdog': unit_health(control.UNIT + '-gate.timer'),
                   'review timer': unit_health('iphone4-linux-review.timer')}
         events = critical_events(cfg, records, health, now)
+        phonefile = control.STATE / 'phone/observation.json'
+        if phonefile.exists():
+            observation = json.loads(phonefile.read_text())
+            events += phone_events(observation, now)
+            if not unit_health('iphone4-linux-phone.timer')[1]:
+                events.append(event('phone-watch-down', 'The iPhone connection watcher has stopped.',
+                                    'A maintainer needs to restore automatic identification.'))
+            elif now - datetime.fromisoformat(observation['checked_at']).timestamp() > 300:
+                events.append(event('phone-watch-stale', 'The iPhone connection watcher is not producing fresh observations.',
+                                    'A maintainer needs to inspect the failed identification service.'))
         expected = any(w.get('state') not in ('awaiting_review', 'blocked', 'stopped', 'limit')
                        for w in cfg['workers'])
         if expected and not unit_health(control.UNIT + '.service')[1]:

@@ -15,10 +15,12 @@ It reports:
 - Three consecutive failures to check OpenCode.
 - A specific decision or access requirement the senior reviewer assigns to Boris.
 - An explicitly configured deadline ending (the ongoing run has none).
+- A stopped or stale phone watcher, or a persistent model/connection problem
+  that needs attention. Successful identification stays quiet.
 
 Every message names the problem, the next action and the relevant GitHub issue.
-Normal compilation, queued reviews, routine fixes and the
-already-known missing phone cable stay quiet. A request for a human decision
+Normal compilation, queued reviews, routine fixes and waiting for the phone
+to be connected stay quiet. A request for a human decision
 must name a concrete action and put the affected goal on hold. Workers cannot
 send arbitrary messages or choose a recipient.
 

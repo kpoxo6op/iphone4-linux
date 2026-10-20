@@ -9,6 +9,17 @@ import review
 
 
 class ReviewBoundaries(unittest.TestCase):
+    def test_refreshing_phone_timestamp_does_not_buy_another_review(self):
+        # USB polling is not new evidence; a model change is. Guest tests
+        # cannot exercise the senior-inference cost boundary.
+        packet = {'lanes': {}, 'phone_observation': {
+            'checked_at': 'earlier', 'event_id': 'same', 'status': 'identified_n90'}}
+        before = review.evidence_fingerprint(packet)
+        packet['phone_observation']['checked_at'] = 'later'
+        self.assertEqual(review.evidence_fingerprint(packet), before)
+        packet['phone_observation']['status'] = 'other_model'
+        self.assertNotEqual(review.evidence_fingerprint(packet), before)
+
     def test_attempt_budget_uses_auckland_day_and_spacing(self):
         # A UTC date rollover must not grant extra paid reviews in Auckland.
         t = datetime(2026, 10, 20, 23, tzinfo=ZoneInfo('Pacific/Auckland')).timestamp()
