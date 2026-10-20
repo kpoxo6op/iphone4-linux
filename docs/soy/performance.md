@@ -37,70 +37,134 @@ terminal semantics. Its C API supplies incremental render state for our
 display adapter. It does not include the GPU renderer. The existing Markdown
 scenes remain useful while a PTY scene is integrated.
 
-## Measurements and hypotheses
+## Current display path
 
-The framebuffer is 640 × 960, XRGB8888, with a 2560-byte stride. One full frame
-is 2,457,600 bytes. At 60 complete frames per second, one copy alone moves
-roughly 147 MB/s before layout, blending, extra copies or scanout.
+The display is 640 × 960 XRGB8888, stride 2560. One full frame is 2,457,600
+bytes: 60 copies per second move about 147 MB/s before any composition.
+The LVGL prototype draws directly into a cached DRM dumb buffer and submits
+its damage through synchronous `DRM_IOCTL_MODE_DIRTYFB`. The adapter validates
+the fixed simpledrm mode and restores the previous CRTC on clean exit. The
+old framebuffer renderer remains available for recovery; SSH is independent.
 
-The first renderer's mmap presentation reached 221 ms for a cold full update.
-A pwrite experiment then showed a 501 ms presentation p95 across an interactive
-scene run. Both fail the intended experience. A fast best-case copy benchmark
-did not predict actual interaction.
+Pinned LVGL 9.6.0 owns input, layout, scroll physics and animation. Immutable
+paragraph snapshots avoid laying out and blending every glyph during a drag.
+Pinned Pixman 0.46.4 supplies an ARM NEON nearest-neighbour pinch preview via
+LVGL's draw-unit extension. Text reflows from its original source after release.
+The small extension uses private LVGL draw structures, so upgrades require
+rechecking clipping, task ordering and source lifetime.
 
-The pinned kernel's `drivers/gpu/drm/drm_fbdev_shmem.c` sets deferred framebuffer
-updates to `HZ / 20`, about 50 ms. Its mmap path also uses deferred I/O.
-This is direct source evidence of a scheduling constraint, not proof that it
-explains every observed delay. The real renderer now reports scan, transfer
-and retained-frame copy time separately to locate the additional cost.
+The kernel's fbdev **mmap** path uses deferred I/O with a `HZ / 20` delay.
+That is not a general 50 ms limit on framebuffer output: fbdev **pwrite** damage
+uses `drm_fb_helper_damage_range` and immediate work scheduling. Earlier notes
+conflated these paths. Direct simpledrm avoids the fbdev scheduling path, but
+still copies pixels. A completed copy does not prove panel scanout, vsync or
+absence of tearing. The current boot framebuffer reports no measured refresh
+rate, and no accelerated PowerVR driver has been established.
 
-A paced, identical-pixel diagnostic measured about 46–53 ms average for mmap
-methods and 12 ms for pwrite. Those are transfer diagnostics, not end-to-end
-FPS or physical display measurements. In particular, unchanged pixels are an
-easier workload than scrolling text.
+Source references: pinned kernel `drivers/gpu/drm/sysfb/simpledrm.c`,
+`drivers/gpu/drm/sysfb/drm_sysfb_modeset.c`,
+`drivers/gpu/drm/drm_damage_helper.c`,
+`drivers/gpu/drm/drm_fbdev_shmem.c` and `drivers/gpu/drm/drm_fb_helper.c`;
+[Linux DRM UAPI](https://docs.kernel.org/gpu/drm-uapi.html);
+[LVGL source](https://github.com/lvgl/lvgl/tree/80ca777e37a2b176770726a02e07a6fb79ef0b39);
+[Pixman](https://gitlab.freedesktop.org/pixman/pixman/-/tree/pixman-0.46.4).
 
-Instrumentation found a second, avoidable bottleneck: one actual frame spent
-151.844 ms comparing rows, 1.766 ms transferring pixels and 8.515 ms retaining
-a copy. On the native pwrite path we removed the full-frame comparison and
-retained copy. Presentation already runs only when content changes.
+## Latest phone measurement — still fails
 
-After that change, ten reader/storage transitions produced 99 submitted
-frames: presentation mean 12.659 ms, p95 20.411 ms and maximum 64.094 ms,
-including the cold first frame. The final transfer took 6.792 ms. This is a
-useful improvement, but it still misses the 16.7 ms p95 target and excludes
-layout, composition, input latency and physical scanout. It is not a 60 FPS
-claim. Local receipts: `output/soy/deploy-no-scan.json` and
-`output/soy/presentation-no-scan.json`.
+21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary
+`d4ebd5c6b584f78219feaf963a503c29f7e33907f3e41713c8a2b025c0f8fab3`.
+Each run uses locally generated virtual contacts on the phone and measures
+completed DRM damage copies. Normal telemetry sampling remains enabled.
+These measurements do not establish physical touch or LCD scanout.
 
-## Work order
+| Surface | Average fps | p95 interval | Worst interval | Intervals over 16.67 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Reading | 76.35 | 15.44 ms | 37.74 ms | 32 / 898 |
+| Pages | 62.89 | 18.13 ms | 40.09 ms | 142 / 731 |
+| Pinch in | 63.72 | 18.30 ms | 41.36 ms | 120 / 690 |
+| Pinch out | 72.61 | 17.99 ms | 51.40 ms | 65 / 799 |
+| Top sheet | 104.22 | 12.15 ms | 34.90 ms | 24 / 1176 |
+| Bottom sheet | 80.65 | 15.15 ms | 37.33 ms | 27 / 909 |
 
-1. **Locate the delay.** Time layout, composition, dirty detection, transfer and
-   retained-frame copies independently. Measure process CPU and wall time.
-   Keep the same scene, input sequence and compiler flags for comparisons.
-2. **Fix presentation.** Evaluate the current pwrite/mmap paths and a bounded
-   DRM dumb-buffer/damage experiment. Preserve the previous renderer and
-   independent SSH. Do not reflash merely to explore a userspace path.
-3. **Keep work out of the gesture loop.** Cache document layout and reusable
-   rendered content. Collapse input bursts to the latest position rather than
-   rendering a backlog. Render data changes only where needed.
-4. **Pace complete frames.** Keep a stable deadline during motion; don't turn
-   a slow frame into additional queued delay. Distinguish submitted frames,
-   finished copies and actual visible scanout.
-5. **Finish interaction.** Add measured inertial scrolling and a reduced-motion
-   option after presentation is fast enough. Preserve axis lock, cancellation
-   and each scene's reading position.
+**All six runs fail the release gate.** A higher average does not excuse the
+remaining stalls. The largest zoom-out gap contains a 24.28 ms synchronous copy
+call and 82 involuntary context switches; that is evidence to investigate
+copy/scheduling interaction, not proof that pixel bandwidth alone is the cause.
+The kernel accounts CPU time in 10 ms increments, so those trace fields cannot
+precisely assign each short stall. Raising the renderer to nice −10 did not
+improve the reading run and was reverted.
 
-## Acceptance
+Phone-local timing marks also expose onset costs. Time from initial contact
+submission to the first completed frame carrying new input was 69 / 59 / 89 /
+75 / 125 / 134 ms in the order above. These include recognition thresholds
+and preparation, and are not event-to-photon latency. Cold sheets still require
+too much construction work. Do not present warm frame averages as proof of
+immediate touch feedback.
 
-The goal is 60 Hz when useful and supported. Initially require a sustained
-software frame interval p95 at or below 16.7 ms for a controlled ten-second
-drag/scroll workload, record p99 and the longest stall, and measure input-to-
-completed-frame latency. These are project targets, not claims about current
-performance. If the display path has a lower proven limit, document it and the
-next experiment rather than relabeling a slow run as smooth.
+The [machine-readable results](touch-results.json) include source and binary
+hashes, behavior checks and limitations. The [raw evidence archive](touch-evidence-2026-10-21.tar.gz)
+contains the exact contact streams, untrimmed CSV histories, replay output and
+build receipt. Archive SHA-256:
+`e34ccff46ca55ab9c30eb4a37df2197384e377f7c2692c6d1de10ee17d566ed1`.
+Local experiments are retained under `output/soy/frames-complete-*`.
 
-Static reading must sleep without needless full-frame updates. Network
-telemetry may refresh once per second without stalling navigation. SSH must
-remain usable throughout. Finally inspect actual finger interaction and
-visible display motion: synthetic input and framebuffer reads cannot prove
-physical responsiveness, vsync or absence of tearing.
+The full 29-case phone suite passed after the input-wakeup and phased-sampling
+changes. The later pinch-only optimization was checked with the affected
+pinch/recovery cases, including zoom-out and pinch during inertial reading.
+The final runtime edit adds sheet-kind and font-size trace columns; it does
+not change gesture behavior. The native sanitizer boundary checks and the fallback renderer's shared-data
+checks pass. Their individual artifact hashes and scopes are in the results;
+none of them certifies frame pacing or physical touch.
+
+## Original baseline
+
+21 October 2026, real N90AP ARM Linux, virtual kernel multitouch input. These
+are completed damage-copy intervals, including the moving sequence and release;
+they are not physical finger or panel measurements. Exact contact streams and
+raw traces are retained locally under `output/soy/frames-final-*`. Candidate
+`prototype-ca7df26afb9c` predates the subsequent optimization experiments.
+
+| Surface | Average fps | p95 interval | Worst interval | Intervals over 16.67 ms |
+| --- | ---: | ---: | ---: | ---: |
+| Reading | 63.97 | 17.37 ms | 47.97 ms | 154 |
+| Pages | 40.48 | 28.82 ms | 47.38 ms | 486 |
+| Pinch | 54.42 | 19.40 ms | 692.19 ms | 340 |
+| Sheet | 18.90 | 61.52 ms | 88.00 ms | 214 |
+
+Mean rendering-plus-copy times were 12.93 / 21.42 / 14.55 / 47.91 ms;
+copy times alone averaged 6.07 / 7.25 / 6.34 / 7.57 ms. The release reflow
+stall is real and must remain in the result. An earlier sine-shaped pinch
+workload reached the font-size clamp and stopped changing pixels. It was
+replaced with continuously changing, bounded coordinates; the pass threshold
+was not relaxed.
+
+## Acceptance and next work
+
+**Every moving surface must meet 60 fps on the actual phone.** Every completed
+frame interval in the acceptance workload must be at most 16.67 ms, including
+cold gesture start and release/reflow. Report p95, p99, the worst interval and
+all misses. An average above 60, configured timer frequency, desktop result or
+copy-only loop cannot pass. Keep the failure visible until it is resolved.
+
+Run `soy/tools/check_frames.py` for reading, pages, pinch and sheets. The
+phone generates contacts locally; SSH round trips do not determine cadence.
+The bounded trace includes monotonic refresh/copy timing, contact sequence and
+visible scroll/page/panel/scale state, damage bounds, CPU accounting, context
+switches and telemetry/status work. Use `pinch-out` and `bottom-sheet` too.
+The status field `input_present_max_ms`
+starts when userspace reads input; it is diagnostic, not kernel-event-to-photon
+latency. Input-onset latency and eventual physical scanout need separate proof.
+
+Viewport/card caches, prepared font layouts, input-ready wakeups and phased
+sampling are now implemented. The [Opus 5.5 review](review-2026-10-21.md)
+records the findings and changes. Next: explain the remaining copy/scheduling
+outliers, prepare cold sheets ahead of contact, update live values without
+whole-view rebuilding, and prepare large/live documents incrementally.
+Preserve input cancellation, reading anchors and explicit memory bounds.
+Reuse the pinned libraries rather than writing another gesture engine.
+Any kernel experiment must retain a recoverable boot and independent SSH;
+the present userspace work does not require a reboot.
+
+Static screens may sleep. Telemetry must not block motion. Independent SSH
+must remain usable. Synthetic contact replay and framebuffer readback cannot
+replace eventual finger-on-glass and visible-motion verification.

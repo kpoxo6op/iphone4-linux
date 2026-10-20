@@ -28,7 +28,11 @@ come from inspected TUIs and established interaction guidance.
 [Ghostty is our rendering reference](docs/soy/performance.md).
 Its [terminal library passes an ARMv7 shell test on this phone](soy/ghostty/README.md);
 the visible renderer has not been switched to it yet.
-Physical touch and Wi-Fi are still missing, and smoothness remains active work.
+The [LVGL touch frontend](docs/soy/touch-research.md) now runs on the phone.
+Virtual-contact tests exercise scrolling, pinch, sheets and recovery through
+Linux input. Physical touch and Wi-Fi are still missing. The strict
+[60 fps gate](docs/soy/performance.md) remains open; higher average frame rates
+do not erase individual stalls.
 
 It boots into RAM and gets Internet through Platt's USB connection. Reboot
 recovery, Wi-Fi, touch and persistent installation are still work ahead.

@@ -14,37 +14,62 @@ Battery and Wi-Fi show unavailable states because their drivers are missing.
 The third scene renders [Boris's Russian post](https://t.me/borex69/37).
 Storage distinguishes the RAM filesystem from phone flash. Settings are read-only.
 
-Remote and synthetic gesture controls work. The phone has no evdev input device
-yet, so physical touch is not accepted. The application and its data currently
+The touch frontend uses pinned LVGL 9.6.0 for scrolling, snapping, gestures and
+layout, with pinned Pixman 0.46.4 for basic composition and pinch scaling.
+It currently **fails the 60 fps release requirement**; see the measured results
+in [performance.md](../docs/soy/performance.md). [The research and interaction map](../docs/soy/touch-research.md)
+explain the choice. Tests use an explicitly virtual Linux uinput touchscreen on
+the phone. The physical digitizer still has no driver, so finger input is not accepted. The application and its data currently
 live in the RAM boot; they do not survive a reboot automatically.
 
-![Five scenes captured from the phone framebuffer](../docs/soy/phone-scenes.png)
+![Five scenes captured from the phone's active display buffer](../docs/soy/touch-scenes.png)
 
-Actual framebuffer captures, 20 October 2026. The image does not establish
-physical touch support or animation smoothness.
+LVGL scenes read independently from the phone's active KMS buffer,
+21 October 2026, shown at 320 × 480 logical size. Native 640 × 960 images
+were also inspected. These still images do not prove physical touch or
+animation smoothness. [Results and artifact hashes](../docs/soy/touch-results.json)
+record the checks and remaining failures.
 
 ## Build and inspect
 
 ```sh
-make -C soy
-soy/build/soy --check --assets soy/assets --scenes soy/scenes
-soy/build/soy --assets soy/assets --scenes soy/scenes \
+python3 soy/tools/build_touch.py --target native
+output/soy/lvgl-native/soy --check --assets soy/assets --scenes soy/scenes
+output/soy/lvgl-native/soy --assets soy/assets --scenes soy/scenes \
   --scene reader --render output/reader.ppm
-python3 soy/tools/check_runtime.py --binary soy/build/soy --out output/soy-check
+python3 soy/tools/build_touch.py --sanitize
+python3 soy/tools/check_scene_boundary.py \
+  --binary output/soy/lvgl-native-asan/soy --out output/soy-boundary-check
 ```
 
-The check directory must be new. This launches the actual host renderer and
-exercises its FIFO, pixels, gesture cancellation, scroll retention and reload.
-It does not emulate the iPhone's touch controller.
+The output directory for a check must be new. The source download is pinned by
+revision and SHA-256. CMake, Meson, Ninja and a C/C++ compiler are needed on
+the host. `--build-tools /PATH/TO/buildroot/host/bin` can use the existing
+Buildroot Meson/Ninja installation for a native build. No
+desktop toolkit, window server or runtime dependency is installed on the phone.
 
-Cross-build with an ARMv7 hard-float musl toolchain:
+Cross-build with the existing ARMv7 hard-float musl toolchain:
 
 ```sh
-make -C soy clean
-make -C soy CC=arm-linux-gcc \
-  CFLAGS='-O2 -std=c11 -Wall -Wextra -Werror -march=armv7-a -mfpu=vfpv3-d16 -mfloat-abi=hard' \
-  LDFLAGS=-static
+python3 soy/tools/build_touch.py --target armv7 --toolchain /PATH/TO/toolchain/bin
 ```
+
+The ARM build enables Cortex-A8 NEON. Immutable paragraphs use LVGL snapshots,
+with a 128 MiB global pixel-cache budget. Bounded immutable documents prepare
+the five font layouts before the first frame; pinch release switches layouts
+around the same reading anchor. Larger or live documents still use synchronous
+reflow and must not be called performance-complete. Pixman draws the clipped
+nearest-neighbour pinch preview into LVGL's buffer. Simpledrm receives damage
+copies directly; this does not establish synchronized panel scanout. Pages
+and panels reuse viewport images during movement. The panel backdrop is
+dimmed once on opening; live controls resume at rest. `make -C soy legacy` retains the
+previous renderer for recovery; do not confuse its FIFO gesture checks with
+the new kernel input checks.
+
+Input readiness wakes LVGL without waiting for another polling tick.
+Independent telemetry reads are staggered while retaining one-second sampling.
+The [Opus 5.5 review](../docs/soy/review-2026-10-21.md) records these decisions
+and the remaining cold-start, live-update and display-copy work.
 
 `tools/make_fonts.py` bakes DejaVu Sans Mono masks using Pillow on the host.
 The phone needs no font library. Font provenance and license are in `assets/`.
@@ -71,7 +96,7 @@ Supported accents: `sage`, `cyan`, `amber`, `muted`. `hero: true` makes the firs
 heading suitable for a short large value. `source` records provenance.
 The parser handles headings, paragraphs, emphasis, quotes, bullets, code and
 link labels. It is a bounded Markdown subset, not full CommonMark. Link targets
-are not opened by the current reader. Documents have a 128 KiB limit; a bundle
+are not opened by the current reader. Documents have a 128 KiB and 2,048-line limit; a bundle
 can contain up to 32 scenes. Long content scrolls rather than shrinking.
 
 Read-only bindings include `battery.percent`, `battery.state`, `net.wifi`,
@@ -106,14 +131,41 @@ goto reader
 scroll 240
 reload
 capture
+trace
 ```
 
 `SIGHUP` also reloads scenes. Invalid bundles retain the previous scenes.
 The current scene and reading position survive a valid content reload when its
 ID remains. `capture` writes `/run/soy/frame.ppm`; `status.json` reports the
-actual backend, input devices, frame counts and presentation timing. Debug
-information stays here, off the display.
+actual backend, physical versus virtual inputs, gesture state, cache size and
+complete LVGL rendering plus framebuffer-transfer timings. `trace` writes the bounded `/run/soy/frames.csv` history. Debug information
+stays here, off the display. `display_capture.c` independently reads the active
+KMS buffer; `/dev/fb0` may refer to an older buffer during direct DRM use.
 
-For automated checks, `touch down|move|up X Y` enters the same gesture state
-machine. It is always synthetic input, never proof of physical touch.
-`quit` stops the renderer cleanly.
+`quit` stops the renderer cleanly. The new frontend deliberately has no
+high-level fake-touch FIFO command. Unattended acceptance uses `touch_replay.c`
+through `/dev/uinput`, then the same evdev and LVGL path a hardware driver uses:
+
+```sh
+arm-linux-gcc -O2 -static soy/tools/touch_replay.c -o output/touch-replay-arm
+python3 soy/tools/check_touch.py --ssh-config PRIVATE_CONFIG \
+  --replay output/touch-replay-arm --out output/phone-touch-check
+```
+
+The phone needs its matching `uinput.ko` loaded. Replay devices are named
+`Soy replay (virtual)`, use a different coordinate range from the LCD, and are
+destroyed when the replay process exits. No test result establishes physical
+finger support. Device disappearance and event overflow cancel the current
+gesture; input resumes after contacts are released.
+
+Measure all four moving surfaces on the phone:
+
+```sh
+python3 soy/tools/check_frames.py --ssh-config PRIVATE_CONFIG \
+  --replay output/touch-replay-arm --out output/phone-frames-reading \
+  --surface reading
+```
+
+Repeat for `pages`, `pinch` and `sheet`. The script deliberately exits nonzero
+when any interval exceeds 16.67 ms. Preserve the failure and raw trace; averages
+and timer settings cannot replace the release gate.

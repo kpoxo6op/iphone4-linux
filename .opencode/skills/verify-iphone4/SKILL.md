@@ -7,7 +7,9 @@ description: Verify iPhone Linux build artifacts and QEMU SSH/file behavior usin
 
 Read [the feature map](features/README.md), then only the relevant feature.
 The primary offline user surface is the ARM shell over SSH and the terminal
-UI. The physical phone is a separate, currently unavailable surface.
+UI. The real phone now runs a RAM-booted Linux system; check its live availability.
+Its physical peripherals remain separate gates. Virtual input on that phone
+does not establish a working digitizer.
 
 ## Doctor and drive
 

@@ -39,12 +39,19 @@ surround it.
 Reading position belongs to each scene. Returning to a post should not lose
 your place. The first version has no settings that pretend to work.
 
-Aim for the display's useful maximum, initially a 60 Hz frame budget during
-movement. Use a short, interruptible slide, around 180 ms, with an ease-out
+**60 fps is required throughout movement.** Any completed-frame interval over
+16.67 ms in the phone acceptance workload is a blocking defect. Report
+missed frames and the worst gap; an average above 60 does not pass.
+Use a short, interruptible slide, around 180 ms, with an ease-out
 curve. Touch feedback must begin on the next rendered frame. Static scenes
 sleep between input and data changes; there is no reason to redraw 60 identical
 frames a second. Report measured frame times on the phone before calling it
 smooth. A software framebuffer copy is not proof of tear-free scanout.
+
+Panels use an opaque surface over a fixed dimmed backdrop. Keep the content
+quiet while the panel follows the finger; repeated full-screen blending adds
+no necessary information. During movement, reuse prepared text and panel
+images. Restore live controls at rest, including their pressed feedback.
 
 ## First five scenes
 

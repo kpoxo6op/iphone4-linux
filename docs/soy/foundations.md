@@ -128,8 +128,10 @@ Page movement should match the finger's direction. The page control remains
 stationary so the person retains a point of reference. Data updates should not
 replay entrance animations. A still document should remain still.
 
-The current 180 ms settle is an initial tuning choice. A nominal 60 Hz loop is
-only a target: measure actual frame intervals and response latency on the A4.
+The short settle duration is a tuning choice. **60 fps is an owner requirement,
+not a nominal timer setting.** Measure complete frame intervals on the A4:
+each must stay within 16.67 ms during the acceptance workload. Report every
+missed budget and the worst stall, including text reflow and panel opening.
 The [response-time research summarized by Nielsen](https://www.nngroup.com/articles/response-times-3-important-limits/)
 explains why delayed feedback disrupts the sense of control; it does not prove
 that this renderer meets a particular latency.
@@ -209,7 +211,7 @@ position and reload through the real runtime. After deployment read back the
 device framebuffer and check it. Keep evidence separate from claims about
 physical touch.
 
-The first version still lacks physical touch validation, adjustable type,
-reduced-motion settings and inertial vertical scrolling. Those remain explicit
-quality gaps; reading these principles does not satisfy them. Future AI work
-must close observed gaps rather than merely add more rules.
+The LVGL prototype now exercises adjustable type and inertial scrolling through
+virtual input on the phone. Physical touch, consistent 60 fps and reduced-motion
+settings remain quality gaps. Reading these principles does not satisfy them.
+Future AI work must close observed gaps rather than merely add more rules.

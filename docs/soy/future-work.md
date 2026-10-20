@@ -1,42 +1,12 @@
-# Future touch and boot animation
+# Touch and future boot animation
 
-Owner request, 20 October 2026. **Planned, not active.** Current workers continue
-screens, recovery and hardware bring-up. These projects need a later explicit
-activation; finishing today's work does not activate them.
-
-## Touch that feels like a phone
-
-First establish real multi-contact input on the physical device, including
-contact IDs, coordinates, timestamps, release and interrupted-event recovery.
-A synthetic FIFO gesture is useful for regression checks, not hardware proof.
-Continue today's basic touch-driver work without treating it as this expanded
-interaction project.
-
-Then design the interaction map before implementing:
-
-- Taps, double taps and long presses where each has a useful, visible purpose.
-- Direct horizontal page dragging and vertical reading, velocity-aware release,
-  inertial scrolling and interruptible settling.
-- Elastic resistance and a clean return at the first/last scene and document
-  boundaries. A boundary must feel intentional rather than frozen.
-- Pinch handling with a defined result, such as readable document zoom around
-  the fingers' focal point. Set useful limits, preserve place and avoid
-  accidental scene changes during a pinch.
-- Swipes from the top and bottom, with distinct documented destinations.
-  Choose those destinations during the future design phase; do not invent
-  panels or settings now. Provide cancellation and resolve conflicts with
-  page scrolling and the bottom page control.
-- Gesture arbitration: axis locking, finger-count changes, interrupted contact
-  streams, palm/noise rejection where supported, and animation interruption.
-- Comfortable targets, discoverability, a reduced-motion path and an equivalent
-  way to reach essential actions without an obscure gesture.
-
-Deliver an interaction specification and state transitions, then replayable
-event-stream checks, then real finger demonstrations on the phone. Measure
-response latency and sustained frame cadence during gestures. A modern phone
-feel is the target; a list of recognized gestures is not completion.
+The owner activated expanded touch on the evening of 20 October 2026.
+The implementation and reuse decision are in [touch-research.md](touch-research.md).
+Physical digitizer acceptance remains separate from virtual-input testing.
 
 ## Growing soybean plant at boot
+
+**Planned, not active.** The touch activation does not activate this artwork.
 
 The visible boot experience is one full-screen ASCII soybean plant growing
 against the dark background. No shell, kernel messages, login prompt, logo

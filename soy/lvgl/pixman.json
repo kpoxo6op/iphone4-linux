@@ -1,0 +1,8 @@
+{
+  "name": "pixman",
+  "version": "0.46.4",
+  "url": "https://xorg.freedesktop.org/releases/individual/lib/pixman-0.46.4.tar.xz",
+  "sha256": "a098c33924754ad43f981b740f6d576c70f9ed1006e12221b1845431ebce1239",
+  "license": "MIT",
+  "purpose": "ARM NEON fills, cached image composition and nearest-neighbour pinch preview; LVGL retains layout, input and widgets"
+}

@@ -1,0 +1,8 @@
+{
+  "project": "LVGL",
+  "version": "9.6.0",
+  "revision": "80ca777e37a2b176770726a02e07a6fb79ef0b39",
+  "url": "https://codeload.github.com/lvgl/lvgl/tar.gz/80ca777e37a2b176770726a02e07a6fb79ef0b39",
+  "sha256": "1c10f77b8e5e7776366d56de5645958f3312b3926b71a2a811d819fc0ad0cbaa",
+  "license": "MIT"
+}

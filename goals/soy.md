@@ -1,7 +1,7 @@
 # Soy: scenes on the real iPhone
 
-Owner: DeepSeek workers implement the screens and runtime; the master reviews
-bounded handoffs. Existing recovery, remote-access and hardware goals remain
+Owner: DeepSeek workers implement screens and recovery; the master owns the
+LVGL touch integration and reviews bounded handoffs. Existing recovery, remote-access and hardware goals remain
 active. The owner requested this delegation on 20 October 2026.
 
 ## Current assignments
@@ -61,14 +61,53 @@ operator; other lanes send artifacts rather than racing the device.
 
 - Measure complete frame cadence, longest stalls and input-to-completed-frame
   latency for the existing scene/scroll workload. Preserve the previous working
-  display and SSH path. Start with the documented pwrite baseline, then make
+  display and SSH path. Start with the documented direct-simpledrm baseline, then make
   one source-grounded improvement at a time. No kernel reflash for an experiment
   that can run in userspace.
-- Report cold and warm results, memory and idle CPU. The target remains 60 Hz
-  during motion, not 60 identical idle redraws. Distinguish framebuffer writes
+- Report cold and warm results, memory and idle CPU. **60 fps is mandatory**:
+  every completed-frame interval must be at most 16.67 ms in the acceptance
+  workloads, including the first moving frame and release/reflow. A passing
+  average does not compensate for stalls. Static screens may sleep.
+  Distinguish framebuffer writes
   from verified physical scanout. Do not certify smoothness from a copy loop.
-- Support the existing touch-device bring-up, but do not implement the deferred
-  gesture expansion or boot animation described below.
+- Prioritize the missing physical touchscreen transport. The master has adopted
+  pinned LVGL 9.6.0 for expanded gestures; reuse it. Its real-phone uinput tests
+  prove the software path, not the N90 digitizer. Deliver source-grounded board
+  transport, firmware/reset/interrupt evidence and contact events to the master.
+  Do not replace the gesture engine or reflash the live phone during the master
+  display session. Boot artwork remains deferred.
+
+**Immediate performance defects:** the master's LVGL prototype does not meet
+the 60 fps gate. Use `soy/tools/check_frames.py` and its bounded `frames.csv`
+trace for reading, pages, pinch and sheets; preserve the strict failure result.
+Kernel lane owns display-copy and scheduling investigation. Qemu lane owns
+incremental layout preparation for documents outside the new bounded font cache,
+further page/sheet composition work, and recovery. Small static documents now
+prebuild font variants; preserve their anchor and ownership checks. Keep the
+128 MiB pixel-cache cap. Add bounded release retention that keeps the running
+release, verified rollback and original fallback: repeated test deployments
+filled the RAM filesystem, and staging correctly failed before switching. Work in the existing assigned
+paths and submit small patches for the master to test on the phone. Reuse LVGL,
+Pixman and the current adapters. Do not add a framework, lower the threshold,
+hide slow frames, render fake updates at zoom limits, or label the prototype
+accepted. See `docs/soy/performance.md` for the measured baseline and priorities.
+
+Use the [Opus review](../docs/soy/review-2026-10-21.md) to avoid repeating fixed
+experiments. Extend coverage to zoom-out, bottom sheets, cold gesture onset,
+release, live scenes and a pinch interrupting reading. Do not count a 10 ms
+quantized CPU sample as precise per-frame attribution. The matching kernel
+enables high-resolution timers but lacks fine virtual CPU accounting and
+scheduler statistics; its S5L clocksource also has an unresolved sched-clock
+TODO. Investigate that from source and measurements before proposing a new
+kernel. A nice −10 experiment did not solve the misses and was reverted.
+Do not starve SSH with a real-time busy loop.
+
+Qemu's next UI handoff should prepare sheets before contact without freezing
+live values, update live bindings without rebuilding the entire view, and
+preserve the existing 128 MiB cache limit. Kernel's next handoff should explain
+the remaining copy/scheduling outliers with a bounded trace and a proposed
+experiment that preserves the current RAM boot. Physical touchscreen transport
+remains its hardware priority. Keep recovery work active in both lanes.
 
 ## Delivery and scope
 
@@ -81,10 +120,13 @@ commands, exit status, artifact hashes, limitations and next action in
 before starting a wholesale redesign. Do not repeat passing work without a
 changed input or concrete failure.
 
-[Future touch and boot art](../docs/soy/future-work.md) is **planning only**.
-Do not implement it, research it now, or start it automatically after these
-assignments. The senior reviewer must preserve this boundary. No additional
-paid model or new model route is authorized.
+The owner activated expanded touch after the original delegation. Read
+[touch-research.md](../docs/soy/touch-research.md) and use the refreshed handoff
+baseline. Screen and recovery patches now target `soy/src/touch.c` (LVGL) and
+shared `soy/src/scene_data.h`; `soy/src/soy.c` is the retained fallback. Do not
+ship a parallel gesture recognizer or restore the old runtime over the new one.
+[Boot art](../docs/soy/future-work.md) remains **planning only**: do not research
+or implement it now. No paid fallback or new worker model route is authorized.
 
 ## Shared product acceptance
 

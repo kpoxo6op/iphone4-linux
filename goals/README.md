@@ -36,9 +36,11 @@ add battery/network, reader/storage/settings and display performance alongside
 recovery and driver work. Its design basis is saved in
 [foundations](../docs/soy/foundations.md).
 
-[Expanded touch and the growing-plant boot animation](../docs/soy/future-work.md)
-are planned only. The animation's research and frame studies must be committed
-before production work. Neither project is activated by this backlog entry.
+[Expanded touch](../docs/soy/touch-research.md) is active: the LVGL frontend
+passes virtual-contact behavior checks on the phone, while physical input
+and the strict 60 fps gate remain open. The [growing-plant boot animation](../docs/soy/future-work.md)
+is still planned only. Its research and frame studies must be committed
+before production work.
 
 [GitHub goals](https://github.com/kpoxo6op/iphone4-linux/issues) track scope and
 review. See the [agent workflow](../docs/agent-workflow.md).

@@ -9,6 +9,12 @@ The owner's reference for text rendering and responsiveness is
 [Ghostty](https://github.com/ghostty-org/ghostty). Read
 `docs/soy/performance.md` before changing the display path. Measure the running
 phone; a nominal FPS setting or a desktop benchmark is not acceptance.
+Expanded touch uses pinned LVGL 9.6.0, selected after the owner explicitly
+requested research and reuse. Read `docs/soy/touch-research.md` and build with
+`soy/tools/build_touch.py`. Keep libghostty-vt for terminal semantics. These
+are complementary libraries, not permission to add another UI framework.
+Pixman 0.46.4 supplies cached image composition and the pinch preview scaler. The fixed-panel simpledrm
+adapter reports completion of damage copies, not synchronized panel scanout.
 These are owner requirements, including for the master maintainer:
 
 - The screen belongs to the content. Never stamp `soy`, a project name, a
@@ -21,6 +27,14 @@ These are owner requirements, including for the master maintainer:
   Say “Battery”, “Network”, “Storage”; spend the remaining pixels on content.
 - Design for this 3.5-inch touch screen. Large readable type, dark theme,
   generous hit areas, one main purpose per view. Do not shrink a desktop TUI.
+- **60 fps is a release requirement for every moving UI surface.** Measure on
+  the actual iPhone, including input processing, rendering and framebuffer
+  transfer. During motion, each completed-frame interval must be at most
+  16.67 ms in the acceptance workload; report missed frames and the worst
+  interval, not just an average. A nominal timer, a copy-only benchmark or
+  a desktop result does not pass. Lagging gestures, pinch previews, sheets
+  or transitions are blocking defects. Static screens may sleep. Do not
+  claim 60 fps or smoothness while measured motion misses this requirement.
 - Gestures must manipulate content while the finger moves, support cancellation,
   and preserve reading position. A release-only animation is insufficient.
 - Show measured data or an honest empty state. No fake history, connections,

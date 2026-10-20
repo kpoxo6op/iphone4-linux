@@ -11,6 +11,14 @@
       "glyphs": 624,
       "sha256": "730dce43de1e8f87fb87a323244f62df443ed42b39f3c401a810f9abd3ac9489"
     },
+    "32": {
+      "cell": [
+        19,
+        42
+      ],
+      "glyphs": 624,
+      "sha256": "7eda22475022628a3f23909ef83dd73eb43c14b47756b1bacbe689e1005fc2a3"
+    },
     "36": {
       "cell": [
         22,
@@ -19,6 +27,14 @@
       "glyphs": 624,
       "sha256": "b24ad9a625ffeca154fd17dc6cc1aaa7169a2ba527c497553098232fe189fe5a"
     },
+    "42": {
+      "cell": [
+        25,
+        53
+      ],
+      "glyphs": 624,
+      "sha256": "88e0c252004defd1a35c0aa1438649af2e982977d7ecf0babd8c8fa6b522e1d8"
+    },
     "48": {
       "cell": [
         29,
@@ -26,6 +42,14 @@
       ],
       "glyphs": 624,
       "sha256": "24ff03f3fefe36d9880a7c1ced3133109b06becbc48d317a24dc9ac9abc1a7fe"
+    },
+    "54": {
+      "cell": [
+        33,
+        68
+      ],
+      "glyphs": 624,
+      "sha256": "c8b12be1004ea198cfe94fa94ebe04cfacbc4c3013b5ed236a5385601230958f"
     },
     "96": {
       "cell": [

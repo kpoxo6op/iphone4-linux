@@ -97,7 +97,7 @@ echo $! > /run/soy/renderer.pid''', timeout=15)
             result = json.loads(remote(
                 'p=$(cat /run/soy/renderer.pid); kill -0 "$p" && cat /run/soy/status.json',
                 timeout=12))
-            if result['backend'] == 'framebuffer' and result['scene'] == scene:
+            if result['backend'] in ('framebuffer', 'simpledrm') and result['scene'] == scene:
                 return result
         except (RuntimeError, json.JSONDecodeError):
             pass
