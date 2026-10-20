@@ -132,8 +132,9 @@ def tick(cfg):
                         'text': 'New sanitized USB/model evidence is in '
                                 '.opencode/phone-observation.json. Read it at the next safe '
                                 'checkpoint and update your goals/cable-day.md handoff. '
-                                'Device work is owner-authorized but maintainer-executed; '
-                                'your offline sandbox still applies.',
+                                'The kernel lane operates the real phone with owner '
+                                'authorization; other lanes support it in parallel. '
+                                'Follow the current AGENTS.md device assignment.',
                         'delivery': 'steer'}, w['path'])
                     w['observation_seen'] = observation['event_id']
                     save(cfg)
@@ -197,8 +198,9 @@ def tick(cfg):
             if new_observation:
                 prompt += (' Read the new .opencode/phone-observation.json. Reconcile the '
                            'observed model/mode with your goals/cable-day.md handoff. '
-                           'Device work is owner-authorized but maintainer-executed; '
-                           'your offline sandbox still applies.')
+                           'The kernel lane operates the real phone with owner '
+                           'authorization; other lanes support it in parallel. '
+                           'Follow the current AGENTS.md device assignment.')
             api('POST', f"/api/session/{w['session']}/command",
                 {'name': 'goals', 'text': w['name'] + '\n' + prompt}, w['path'])
             w.update(state='running', last_sent=time.time(), next_run=time.time() + 300,

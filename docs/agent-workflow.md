@@ -54,7 +54,9 @@ required test instrument; source-only checks cannot certify drivers.
    feedback for the worker. The supervisor resumes the free worker with corrections.
    An ambiguous publication is not blindly resent.
 7. A maintainer reviews the actual diff and independently verifies checks before
-   a curated PR/merge. Automatic review is not release or hardware approval.
+   a curated PR/merge. Automatic review is not release or hardware acceptance.
+   The owner's device authorization already permits the kernel worker to run
+   boot and flashing experiments; it does not need another execution approval.
 
 This is a steering checkpoint, not an exhaustive code review. Packets contain a
 bounded selection of source, notes, artifact metadata and log tails. Omitted
@@ -76,7 +78,7 @@ enroll a tailnet, flash a phone, push worker code or execute experiments.
 
 The [Soyclaw alert monitor](alerts.md) reports critical failures and explicit
 owner decisions. A reviewer sets `attention: user` only with `decision: hold`
-and a concrete `user_action`. Routine fixes and the known lack of a cable do
+and a concrete `user_action`. Routine fixes and ordinary device-mode changes do
 not qualify. The supervisor stops a held lane; the notifier uses a fixed
 private recipient. It runs without another model call and does not consume a
 senior-review slot.

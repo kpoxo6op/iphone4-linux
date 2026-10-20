@@ -16,8 +16,9 @@ can come first; touch and Wi-Fi do not block the initial tailnet path.
 
 ## Current work
 
-The cable is here. [First connection to Platt](docs/first-connection.md) covers
-automatic identification and the workers' RAM-boot and remote-access handoff.
+The phone is connected and identified as N90AP. The kernel worker now has
+[direct USB access](docs/first-connection.md) for boot and flashing experiments.
+The other workers prepare userspace and drivers in parallel.
 
 Three independent OpenCode workers are assigned [goals](goals/README.md):
 
@@ -68,8 +69,9 @@ There are no prebuilt images in this initial scaffold.
 
 The local supervisor can run around the clock, with separate visible OpenCode
 sessions, periodic checkpoints, backoff on errors, and an explicit stop on
-completion, an unchanged blocker, or a resource limit. It never flashes a phone,
-pushes Git, changes credentials, or calls other models. Local state and logs are
+completion, an unchanged blocker, or a resource limit. The assigned device
+operator can boot and flash this phone with the owner's authorization. Workers
+cannot push Git, change host credentials, or call other models. Local state and logs are
 ignored by Git. `/goals NAME` is a project command; this OpenCode version has no
 native persistent goals API. The supervisor supplies the continuation loop.
 

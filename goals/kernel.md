@@ -1,7 +1,9 @@
 # kernel: M3
 
-Current priority: the kernel assignment in [first connection](cable-day.md).
-Keep the M3 reproduction and review evidence below as its prerequisite.
+Current priority: operate the connected N90AP and boot Linux, then reach
+key-only SSH over USB. Follow [device work](cable-day.md). You have real USB
+access and full owner authorization; do not stop at a proposal or wait for
+another approval. Preserve the M3 reproduction and review evidence below.
 
 Reproducibly cross-compile archeYR/linux at
 8e79d535d2068ae9b9475d2e6850a6edd67fad5b, using s5l8930_defconfig and
@@ -19,7 +21,8 @@ output/phone/. Use readelf to establish 32-bit ARM, inspect DTB compatibility,
 and document required boot arguments and loader assumptions from actual source.
 Prepare a minimal initramfs with BusyBox if practical after kernel passes;
 do not block a reproducible kernel deliverable on a speculative rootfs port.
-No device boot or NAND writes. Do not claim USB works based solely on compilation.
+Device boot and storage writes are owner-authorized on the pinned phone.
+Prefer RAM boot for fast iteration. Do not claim USB works based solely on compilation.
 
 Report existing driver/DT omissions relevant to USB console/RAM rootfs. Propose
 only source-grounded minimal patches and retain upstream provenance and license.

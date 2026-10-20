@@ -1,14 +1,17 @@
 # First connection to Platt
 
-The cable is here. The owner will connect the phone to Platt. The first job is
-to identify it and prepare a recoverable RAM boot. A connected USB device is
-not evidence that Linux boots.
+The phone is connected to Platt. A live `irecovery -q` confirmed iPhone3,1,
+N90AP, CPID 0x8930, BDID 0x00, in recovery mode on 20 October 2026.
+The next job is to boot Linux and establish USB SSH, then Tailscale.
 
-The maintainer handles the host and read-only identification. Workers retain
-their existing sandbox: no phone, USB, pairing records or host services. They
-can read the sanitized snapshot at `.opencode/phone-observation.json` when
-available. It contains USB mode and selected model/software facts, never a
-serial number, UDID, ECID, device name, account or pairing material.
+The kernel lane now operates the real phone through USB inside its sandbox.
+The host helper exposes only this phone's USB socket; Apple recovery/DFU
+enumerations must also match its pinned ECID. Loader/Linux USB IDs on that
+socket remain accessible across resets. One kernel shell owns USB at a time.
+Other lanes supply software and analysis in parallel. Read the current
+`.opencode/phone-observation.json` and `.opencode/device-access.json`.
+Use `irecovery -q` yourself to verify access; keep its raw output under
+ignored output/hardware and publish only model/mode and non-unique chip facts.
 
 Normal iOS, recovery and DFU are separate observations. Do not infer N90 from
 an Apple USB vendor ID. The current kernel targets iPhone3,1 / N90AP. A
@@ -18,7 +21,7 @@ different or unknown model blocks use of that image and requires a new plan.
 
 On 20 October 2026 the owner authorized flashing, erasing and other device work
 on this project iPhone and confirmed that it holds no important data. Do not
-ask for that permission again. The maintainer may execute the appropriate
+ask for that permission again. The device operator may execute the appropriate
 recovery/DFU, exploit, payload and flashing steps when the target and procedure
 are established. Start with RAM boot where practical because it gives a fast
 development loop; a backup is not a prerequisite imposed by this project.
@@ -26,24 +29,30 @@ development loop; a backup is not a prerequisite imposed by this project.
 Authorization does not establish a correct boot chain or make an unknown
 image compatible. Confirm the actual model, source/provenance, artifact
 hashes, exact command sequence and recovery procedure before executing.
-Workers keep their existing offline sandbox and prepare reviewable artifacts
-and commands; device execution belongs to the maintainer. An observation
-alone does not authorize a sandbox escape or arbitrary register/storage writes.
-Live tailnet enrollment and host firewall changes remain separate from phone
-flashing authorization.
+The owner subsequently requested full worker access to the device. The kernel
+lane may execute experiments without a separate maintainer approval. Build,
+run, diagnose and iterate; do not turn this back into proposal-only work.
+Keep the host sandbox and other devices isolated. Record commands and results,
+and avoid pointless writes that do not test a concrete hypothesis.
+The requested Tailscale/SSH work on this phone is part of the goal. The
+maintainer handles phone-scoped enrollment credentials and the host USB-network
+setup; workers do not receive unrelated host/account access.
 
 ## Assignments
 
-- **kernel:** prepare the RAM boot handoff in `phone/docs/first-boot.md`.
+- **kernel:** build and execute the boot path, documenting it in
+  `phone/docs/first-boot.md`.
   Investigate the loader from primary source at pinned revisions. Establish
   what actually supports A4/N90, required device mode and firmware, payload
   format and load addresses, DTB/initramfs handoff, and recovery to stock iOS.
   Separate known working upstream paths from untested proposals. If a complete
-  loader is missing, name the smallest missing implementation; do not invent a
-  runnable sequence. A bounded host-only loader build is useful if supported.
+  loader is missing, implement the smallest missing piece and test it. A
+  physical button sequence may require the owner; report exact steps only when
+  the remaining software is ready. Do not invent a command to avoid that fact.
   Also resolve the kernel options and initramfs requirements for USB Ethernet
   (ECM on Linux), TUN and key-only SSH. Preserve the existing M3 artifacts;
-  proposed changes and any new builds need separate manifests.
+  changes and new builds need separate manifests. Integrate the userspace
+  supplied under /seed/handoff/phone-userspace. Do not merely repeat M3 checks.
 - **qemu:** prepare `notes/phone-remote-access-handoff.md` and a reusable
   userspace staging command for RAM-rootfs integration. Keep ownership of the
   ARM userspace, Dropbear and Tailscale init. Export binaries, libraries,
@@ -61,6 +70,7 @@ flashing authorization.
   broad parser rewrite.
 
 Use `.opencode/review-feedback.json` for the latest outstanding findings.
-Prior results still need independent review. New cable-day work does not mark
-them accepted. Retain completion notes and exact artifact hashes. Stop at a
-specific missing observation instead of polling the phone or making up a pass.
+Prior results still need independent acceptance review, but this does not block
+authorized hardware experiments. Retain completion notes and exact artifact
+hashes. Stop only for a concrete external blocker or completed deliverable;
+ordinary compile failures and missing loader code are work to resolve.

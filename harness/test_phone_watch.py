@@ -1,5 +1,6 @@
 """Connection/privacy boundaries cannot be tested by the ARM guest."""
 import json
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -66,6 +67,28 @@ class ConnectionBoundary(unittest.TestCase):
             result = phone_watch.observe(self.root, lambda _: response)
             self.assertEqual(result['status'], 'identity_unavailable')
             self.assertEqual(result['identity'], {})
+
+    def test_recovery_identity_requires_pinned_ecid_and_tracks_loader_transition(self):
+        # A USB PID alone is not N90 identity; loader IDs lose the ECID but
+        # must stay on the identified socket. Neither establishes Linux boot.
+        self.device('phone', '05ac', '1281')
+        phone = self.root / 'phone'
+        (phone / 'serial').write_text('ECID:3039')
+        target = {'devpath': str(phone),
+                  'ecid_sha256': hashlib.sha256(b'12345').hexdigest()}
+        def no_query(_):
+            self.fail('Recovery observation must not compete with the USB operator')
+        observation = phone_watch.observe(self.root, no_query, target)
+        self.assertEqual(observation['identity']['ProductType'], 'iPhone3,1')
+        self.assertEqual(observation['status'], 'recovery')
+        (phone / 'serial').write_text('ECID:3040')
+        self.assertEqual(phone_watch.observe(self.root, no_query, target)['identity'], {})
+        (phone / 'idVendor').write_text('0525')
+        (phone / 'idProduct').write_text('a4a2')
+        observation = phone_watch.observe(self.root, no_query, target)
+        self.assertEqual(observation['status'], 'linux_usb')
+        self.assertIn('same USB socket', observation['identity_source'])
+        self.assertIn('not proof', observation['evidence'])
 
     def test_observation_resumes_idle_lane_once_but_never_overrides_a_hold(self):
         (self.root / '.opencode').mkdir()

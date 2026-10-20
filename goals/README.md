@@ -6,7 +6,7 @@
 | M1 | ARMv7 boot, shell, file I/O | Pinned build, QEMU boot log, independent acceptance harness | qemu |
 | M2 | SSH and small TUI | Reject wrong SSH key; file survives reboot; actual TUI interaction | qemu |
 | M3 | N90 kernel and RAM userspace | Pinned source, successful cross-build, ARM ELF, DTB, hashes | kernel |
-| M4 | Cable-day boot and USB SSH | N90 identification and real phone logs; RAM-only first | Requires phone |
+| M4 | Cable-day boot and USB SSH | N90 identification and real phone logs; RAM first | kernel / connected phone |
 | **M4b — P0** | **Tailscale + SSH on the phone: remote development** | Authorized laptop reaches the phone's own tailnet node; shell, transfer, reconnect and denial checks pass | [remote-access](remote-access.md) / phone |
 | M5 | Wi-Fi and touch | Reviewed driver patches, then actual packets and input events | drivers / phone |
 | M6 | Persistent storage and usable handheld | Recovery plan, tested storage mapping, safe power behavior | Requires phone |

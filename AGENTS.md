@@ -14,8 +14,18 @@ Do not request approval or use direct file tools. Use the sandboxed shell.
 
 - Use only DeepSeek-V4.1-Flash-1017 through opencode/deepseek-v4.1-flash-free at max effort. No paid fallback. Never consult
   another model, spawn agents, use paid coding assistants, or install plugins.
-- No sudo, host package installs, host services, credentials, other repositories,
-  private network services, phone access, USB, flashing, repartitioning or NAND writes.
+- No sudo, host package installs, host services, credentials, other repositories
+  or unrelated private network services. Phone access is assigned below.
+- The owner has authorized unrestricted development on this iPhone, including
+  exploits, bootloader changes, flashing, repartitioning and erasing it. There
+  is no data to preserve and no additional permission prompt is needed.
+  The kernel lane is the current device operator. Its sandbox exposes the
+  pinned phone through /dev/bus/usb, including recovery/DFU re-enumeration.
+  One kernel shell owns the device at a time. Other lanes develop in parallel
+  and hand artifacts to the operator; they do not race it on USB.
+  Identify the target, use source-grounded experiments, keep raw device logs
+  under ignored output/hardware, and redact unique device identifiers from
+  public notes. Device authorization does not include Platt or other devices.
 - Public upstream source downloads are allowed. Record exact URLs, revisions,
   hashes and licenses. Do not redistribute Apple firmware or proprietary blobs.
 - At most two compilation jobs. Keep downloads/builds in .cache or output. Do
@@ -24,6 +34,7 @@ Do not request approval or use direct file tools. Use the sandboxed shell.
 - No fabricated drivers, register addresses, tests, logs or passing results.
   Label each result: source evidence, cross-compile, emulator, or real hardware.
   Emulation cannot prove iPhone USB, SDIO, Wi-Fi, touch, NAND, charging or thermal safety.
+  The device operator should now gather real hardware evidence.
 - Never weaken a failing test to pass, substitute preprinted success markers,
   remove required features, or mark missing hardware tests complete. If an
   acceptance check appears wrong, document the issue and stop for review.

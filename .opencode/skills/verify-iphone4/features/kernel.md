@@ -29,4 +29,5 @@ Preconditions: the pinned source/toolchain, build command and package exist.
 
 USB console, boot arguments and loader handoff need source-grounded reasoning
 and later hardware evidence. BusyBox compilation is not a mounted rootfs.
-An initramfs cpio archive is not a /dev/ram0 block image. Do not try hardware.
+An initramfs cpio archive is not a /dev/ram0 block image. The assigned device
+operator now has owner authorization to test the matching artifacts on hardware.

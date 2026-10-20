@@ -12,8 +12,9 @@ phone's own Tailscale address. An SSH session to the laptop is not this feature.
 
 ## Driving it with hardware verification
 
-Preconditions: cable, identified phone, reviewed reversible RAM boot, working
-Internet path and explicit hardware/tailnet authorization. Currently blocked.
+Preconditions: the identified phone, successful RAM boot and a working Internet
+path. Owner authorization is recorded in goals/cable-day.md; boot and remote
+access still require real evidence.
 
 - Offline workers may prepare pinned ARMv7 binaries, config, TUN dependencies,
   resource estimates and a credential-free runbook inside their assigned scope.

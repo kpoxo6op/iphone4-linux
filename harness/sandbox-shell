@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import sys
+import fcntl
 
 root = Path(__file__).resolve().parent.parent
 cfg = json.loads((root / '.runtime/settings.json').read_text())
@@ -12,6 +13,15 @@ lane = next((x for x in cfg['workers'] if cwd.is_relative_to(Path(x['path']))), 
 if lane is None:
     sys.exit('Refusing shell outside a registered worker checkout')
 base = Path(lane['path'])
+device_owner = cfg.get('device_owner') == lane['name']
+if device_owner:
+    # One USB operator at a time, even if the agent submits parallel shells.
+    lockfd = os.open(root / '.runtime/phone/usb-operation.lock', os.O_CREAT | os.O_RDWR, 0o600)
+    try:
+        fcntl.flock(lockfd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        sys.exit('The phone operator already has a shell running; wait for it to finish.')
+    os.set_inheritable(lockfd, True)
 args = ['bwrap', '--die-with-parent', '--unshare-user', '--unshare-pid',
         '--unshare-ipc', '--unshare-uts', '--cap-drop', 'ALL', '--clearenv',
         '--ro-bind', '/usr', '/usr', '--symlink', 'usr/bin', '/bin',
@@ -25,6 +35,11 @@ for f in ('ssl', 'resolv.conf', 'hosts', 'nsswitch.conf', 'passwd', 'group',
         args += ['--ro-bind', '/etc/' + f, '/etc/' + f]
 args += ['--bind', str(base), str(base), '--ro-bind', str(root / 'harness'), '/acceptance',
          '--ro-bind', str(root / '.cache'), '/seed']
+if device_owner:
+    # udev maintains a directory containing only the pinned phone's USB node.
+    # Keep it mounted across disconnect/re-enumeration inside one exploit tool.
+    args += ['--dev-bind', '/dev/iphone4-worker-usb', '/dev/bus/usb',
+             '--ro-bind', '/sys', '/sys']
 # Protect governance even if a worker invokes a generic shell editor.
 for f in ('AGENTS.md', 'goals', 'harness', '.opencode', 'opencode.json'):
     if (base / f).exists():
@@ -37,4 +52,9 @@ args += sys.argv[1:]
 command = ['systemd-run', '--user', '--scope', '--quiet',
            '-p', 'CPUQuota=150%', '-p', f"MemoryMax={lane['memory']}",
            '-p', 'TasksMax=256', '-p', 'RuntimeMaxSec=7200', '--'] + args
+# systemd-run may close extra fds. Keep the ownership lock in this parent until
+# the whole sandbox exits; no phone-lock descriptor is handed to worker code.
+if device_owner:
+    import subprocess
+    sys.exit(subprocess.call(command, close_fds=True))
 os.execvp(command[0], command)

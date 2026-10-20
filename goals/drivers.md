@@ -17,9 +17,10 @@ lanes' build configuration. Use public primary source code with immutable refs.
    publicly available packet captures, or a source comparison tool that catches
    a concrete mapping mismatch. Do not create meaningless mocks to look busy.
 4. Produce a cable-day experiment plan with observable success/failure signals,
-   required firmware provenance and safe stopping points. All phone commands
-   remain proposals. No NAND writes, bootchain modification, firmware downloads
-   from dubious mirrors, or attempts to access any connected device.
+   required firmware provenance and useful stopping points. Hand commands and
+   patches to the kernel lane, which is the single device operator. Flashing
+   and bootchain work on this phone are owner-authorized; this lane must not
+   race the operator. Use legitimate firmware sources.
 
 The key deliverable is a source-grounded implementable patch or precise missing
 information, not a broad literature review. If hardware observations are needed

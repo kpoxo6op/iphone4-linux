@@ -43,8 +43,10 @@ the phone's own tailnet node, not just installed packages or a tunnel to a lapto
 - Keep raw evidence private; publish sanitized results and artifact hashes.
   Never publish keys, tailnet identities, addresses or authentication state.
 
-Current offline work does not authorize changes to the user's live tailnet,
-credentials or host firewall. Actual phone installation awaits hardware tests.
+The connected phone is now authorized for installation and remote-access work.
+The kernel lane operates it; the maintainer supplies any phone-scoped enrollment
+credential and host USB-network setup when needed. Workers do not receive
+Platt's credentials or general control of its firewall or tailnet policy.
 Integrated Tailscale SSH is optional if ordinary SSH over Tailscale meets the goal.
 
 ## Primary sources

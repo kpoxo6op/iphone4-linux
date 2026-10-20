@@ -8,7 +8,8 @@ description: Run the iPhone Linux goal workflow with pstack investigation, small
 This is the project's OpenCode adaptation of Lauren Tan's pstack. AGENTS.md,
 the assigned goal and supervisor limits govern it. Use DeepSeek 1017 at max;
 the existing senior timer owns cross-model review. Do not spawn agents, switch
-models, install plugins, contact others, merge, or access hardware.
+models, install plugins, contact others or merge. The assigned device operator
+may access this iPhone as described in AGENTS.md and goals/cable-day.md.
 
 At a checkpoint, read the goal, notes/GOAL.md, notes/status.json and any
 .opencode/review-feedback.json. Preserve in-flight builds. Name one observable

@@ -10,6 +10,7 @@ import re
 import subprocess as sp
 
 import control
+import usb_device_nodes
 
 DATA = control.STATE / 'phone'
 KEYS = {
@@ -38,20 +39,25 @@ def usb_mode(pid):
     return {0x1227: 'dfu', 0x1222: 'wtf'}.get(pid)
 
 
-def observe(sysfs=Path('/sys/bus/usb/devices'), run=command):
+def observe(sysfs=Path('/sys/bus/usb/devices'), run=command, target=None):
     devices = []
+    paths = []
     for path in sorted(sysfs.iterdir()):
         try:
-            if (path / 'idVendor').read_text().strip().lower() != '05ac':
-                continue
+            vendor = (path / 'idVendor').read_text().strip().lower()
             pid = int((path / 'idProduct').read_text().strip(), 16)
-            mode = usb_mode(pid)
+            mode = usb_mode(pid) if vendor == '05ac' else None
+            if (target and str(path.resolve()).removeprefix('/sys') == target['devpath']
+                    and vendor == '0525'):
+                mode = {0x1280: 'openiboot', 0xa4a1: 'linux_usb',
+                        0xa4a2: 'linux_usb'}.get(pid)
             if mode:
-                devices.append({'vendor_id': '05ac', 'product_id': f'{pid:04x}',
+                devices.append({'vendor_id': vendor, 'product_id': f'{pid:04x}',
                                 'mode': mode})
+                paths.append(path)
         except (OSError, ValueError):
             continue  # USB removal during enumeration is normal.
-    result = {'evidence': 'host USB observation; no Linux boot attempted',
+    result = {'evidence': 'host USB enumeration; not proof of successful Linux boot',
               'devices': devices, 'identity': {}, 'status': 'no_device'}
     if not devices:
         return result
@@ -61,6 +67,18 @@ def observe(sysfs=Path('/sys/bus/usb/devices'), run=command):
     mode = devices[0]['mode']
     if mode != 'normal':
         result['status'] = mode
+        if target:
+            path = paths[0]
+            try:
+                serial = (path / 'serial').read_text()
+            except OSError:
+                serial = ''
+            if usb_device_nodes.matches(target, str(path.resolve()).removeprefix('/sys'),
+                                        devices[0]['vendor_id'],
+                                        devices[0]['product_id'], serial):
+                result['identity'] = {'ProductType': 'iPhone3,1', 'HardwareModel': 'N90AP'}
+                result['identity_source'] = ('pinned ECID' if devices[0]['vendor_id'] == '05ac'
+                                             else 'previously identified phone on the same USB socket')
         return result  # No libirecovery commands or mode changes.
     ids = (run(['/usr/bin/idevice_id', '-l']) or '').splitlines()
     if len(ids) != 1 or not re.fullmatch(r'[0-9a-fA-F-]{20,64}', ids[0]):
@@ -95,7 +113,9 @@ def atomic(path, value):
 
 def check():
     cfg = json.loads((control.STATE / 'settings.json').read_text())
-    value = observe()
+    targetfile = DATA / 'private/device-policy.json'
+    target = json.loads(targetfile.read_text()) if targetfile.exists() else None
+    value = observe(target=target)
     value['event_id'] = hashlib.sha256(json.dumps(value, sort_keys=True).encode()).hexdigest()[:20]
     value['checked_at'] = datetime.now(timezone.utc).isoformat()
     DATA.mkdir(parents=True, exist_ok=True, mode=0o700)
