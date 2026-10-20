@@ -19,7 +19,16 @@ can come first; touch and Wi-Fi do not block the initial tailnet path.
 **Linux is running on the real phone.** On 20 October 2026, the N90AP booted
 Linux 6.17.0-rc1 and joined Tailscale. SSH works over both USB and the phone's
 own tailnet connection. Interactive terminals, file read/write and rejection
-of a wrong SSH key passed on the hardware.
+of a wrong SSH key passed on the hardware. A 30-minute tailnet session also passed.
+
+**[Soy](soy/README.md)** now displays five text scenes on the phone: battery,
+network, a Russian Markdown post, storage and a settings preview. Scenes live
+in Git and update over SSH. Its [design foundations](docs/soy/foundations.md)
+come from inspected TUIs and established interaction guidance.
+[Ghostty is our rendering reference](docs/soy/performance.md).
+Its [terminal library passes an ARMv7 shell test on this phone](soy/ghostty/README.md);
+the visible renderer has not been switched to it yet.
+Physical touch and Wi-Fi are still missing, and smoothness remains active work.
 
 It boots into RAM and gets Internet through Platt's USB connection. Reboot
 recovery, Wi-Fi, touch and persistent installation are still work ahead.
@@ -28,8 +37,8 @@ See the [first-boot evidence](docs/first-phone-attempt.md) and
 
 Three independent OpenCode workers are assigned [goals](goals/README.md):
 
-1. **qemu**: reproducible ARMv7 image and real boot / SSH / file I/O tests.
-2. **kernel**: pinned iPhone kernel cross-build and a RAM-rootfs artifact.
+1. **qemu**: deployment, recovery and runtime checks for Soy.
+2. **kernel**: repeatable RAM boot, private identity restoration and display bring-up.
 3. **drivers**: evidence-based Wi-Fi, touch and storage bring-up work.
 
 Workers use **DeepSeek-V4.1-Flash-1017** through
@@ -100,6 +109,8 @@ checks the exact route, `max` support and zero prices before dispatching work;
 an independent watchdog checks every minute and stops active workers if those
 checks fail or a session changes model. Soyclaw reports that condition. This
 checks OpenCode's advertised prices; it cannot independently audit provider billing.
+Provider quota errors keep assignments queued and retry after 30 minutes,
+backing off to two hours. They do not trigger paid fallback or demand babysitting.
 The existing goal, retry, resource and 96-cycle limits still apply. Completed
 work waits for review instead of generating busywork. Laptop sleep, shutdown
 or loss of connectivity pauses local work.

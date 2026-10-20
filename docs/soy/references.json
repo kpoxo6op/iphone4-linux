@@ -1,0 +1,26 @@
+{
+  "accessed": "2026-10-20",
+  "scope": "Reference images inspected visually; no claim of usability testing these apps",
+  "images": [
+    {
+      "name": "glow.png",
+      "source": "https://raw.githubusercontent.com/charmbracelet/glow/main/example.png",
+      "sha256": "fe01c133ca90e6cf8829d579a4673d59870a988a067572079df0617a64d32174"
+    },
+    {
+      "name": "btop.png",
+      "source": "https://raw.githubusercontent.com/aristocratos/btop/main/Img/normal.png",
+      "sha256": "3a00dc3f54b60e7e63a63d28caecdb55d1e124bd20e42540e49e6e66542c2083"
+    },
+    {
+      "name": "superfile.png",
+      "source": "https://raw.githubusercontent.com/yorukot/superfile/main/website/src/assets/demo.png",
+      "sha256": "cd913ea259ffeaa64676d022f68e5d79cea65e52bdd3998a57e8f7390f8a4c09"
+    },
+    {
+      "name": "television.png",
+      "source": "https://github.com/user-attachments/assets/6255d115-3490-45ee-82cb-b3a84b2e852d",
+      "sha256": "fa49e30089c97afe48424b9ff5cf844fb5421a464243fdf49159476553e90edc"
+    }
+  ]
+}

@@ -1,5 +1,42 @@
 # Worker contract
 
+## Soy UI rules
+
+Read `docs/soy/foundations.md` and `docs/soy/design.md` before changing any scene,
+renderer or interaction. Start with the person's task and the underlying
+principles, not a blacklist or a collection of fashionable screenshots.
+The owner's reference for text rendering and responsiveness is
+[Ghostty](https://github.com/ghostty-org/ghostty). Read
+`docs/soy/performance.md` before changing the display path. Measure the running
+phone; a nominal FPS setting or a desktop benchmark is not acceptance.
+These are owner requirements, including for the master maintainer:
+
+- The screen belongs to the content. Never stamp `soy`, a project name, a
+  scene counter, debug metadata or decorative branding above every scene.
+  A concise scene title or the actual author of a post is useful context.
+- No permanent “swipe”, “tap”, keyboard hints, tutorial footers or instructions
+  explaining ordinary navigation. Use familiar visible controls and motion.
+  Help belongs in context when something actually needs explaining.
+- No filler slogans, AI sales copy or cute substitutes for clear labels.
+  Say “Battery”, “Network”, “Storage”; spend the remaining pixels on content.
+- Design for this 3.5-inch touch screen. Large readable type, dark theme,
+  generous hit areas, one main purpose per view. Do not shrink a desktop TUI.
+- Gestures must manipulate content while the finger moves, support cancellation,
+  and preserve reading position. A release-only animation is insufficient.
+- Show measured data or an honest empty state. No fake history, connections,
+  settings, progress or working touch claims.
+- Research means inspecting actual reference screens and recording which
+  concrete choices follow from them. A list of repository links is not a design.
+- Before delivery, inspect rendered screens at 320 × 480 logical size and
+  native 640 × 960. Check hierarchy, wrapping, clipping, controls and empty
+  states. Verify device framebuffer output after deployment. Synthetic input
+  tests do not establish physical touch support.
+
+Apply these rules to generated scenes as well as the runtime. Do not restore
+removed clutter to make a screen look “finished”.
+
+## Worker operation
+
 Read your assigned goal before writing code. Work only in your assigned checkout.
 Use .opencode/skills/pstack-iphone/SKILL.md for each goal cycle and its
 verify-iphone4 feature map for evidence. These are project-local pstack

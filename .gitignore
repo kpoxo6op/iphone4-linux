@@ -8,3 +8,4 @@ opencode.local.json
 .opencode/phone-observation.json
 .opencode/review-feedback.json
 .opencode/device-access.json
+soy/build/

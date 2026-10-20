@@ -1,0 +1,39 @@
+{
+  "source": "https://dejavu-fonts.github.io/",
+  "font_sha256": "54bf827eb99404e8f430c330ad30f063334f637eba0109b6a18d4f566a8e9dd8",
+  "generator": "Pillow FreeType rasterization, fixed baseline, alpha masks",
+  "fonts": {
+    "24": {
+      "cell": [
+        14,
+        33
+      ],
+      "glyphs": 624,
+      "sha256": "730dce43de1e8f87fb87a323244f62df443ed42b39f3c401a810f9abd3ac9489"
+    },
+    "36": {
+      "cell": [
+        22,
+        47
+      ],
+      "glyphs": 624,
+      "sha256": "b24ad9a625ffeca154fd17dc6cc1aaa7169a2ba527c497553098232fe189fe5a"
+    },
+    "48": {
+      "cell": [
+        29,
+        61
+      ],
+      "glyphs": 624,
+      "sha256": "24ff03f3fefe36d9880a7c1ced3133109b06becbc48d317a24dc9ac9abc1a7fe"
+    },
+    "96": {
+      "cell": [
+        58,
+        117
+      ],
+      "glyphs": 96,
+      "sha256": "7abbf6a483f8a3e8f95f82d96700534aaa825a74033000fc1fb874ec9b3e945f"
+    }
+  }
+}

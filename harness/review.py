@@ -22,7 +22,7 @@ SENSITIVE = re.compile(r'-----BEGIN .*PRIVATE KEY|tskey-[A-Za-z0-9_-]+|'
                        r'gh[pousr]_[A-Za-z0-9]{20,}|sk-(?:proj-)?[A-Za-z0-9_-]{20,}|'
                        r'Bearer\s+[A-Za-z0-9._-]{20,}')
 OWNED = {
-    'qemu': ('br2-external/', 'tools/', 'notes/', 'build.sh', 'README.qemu.md'),
+    'qemu': ('br2-external/', 'tools/', 'notes/', 'soy-runtime/', 'build.sh', 'README.qemu.md'),
     'kernel': ('phone/', 'notes/', 'docs/'),
     'drivers': ('research/', 'patches/experimental/', 'tools/analysis/', 'notes/'),
 }
@@ -67,6 +67,9 @@ def collect(cfg):
               'cable_day': read_text(ROOT, 'goals/cable-day.md'),
               'phone_observation': phone,
               'lanes': {}}
+    if any(w.get('goal') == 'soy' for w in cfg['workers']):
+        packet['soy_design'] = read_text(ROOT, 'docs/soy/design.md')
+        packet['soy_performance'] = read_text(ROOT, 'docs/soy/performance.md')
     trigger = False
     for w in cfg['workers']:
         name = w['name']
@@ -78,11 +81,13 @@ def collect(cfg):
             status = json.loads(raw)
         except ValueError:
             status = {'status': 'missing_or_invalid'}
-        trigger |= status.get('status') in ('ready_for_review', 'blocked')
-        trigger |= w.get('state') in ('blocked', 'awaiting_review', 'limit')
-        trigger |= time.time() - w.get('last_sent', time.time()) > 6 * 3600
+        if w.get('state') != 'quota_wait':
+            trigger |= status.get('status') in ('ready_for_review', 'blocked')
+            trigger |= w.get('state') in ('blocked', 'awaiting_review', 'limit')
+            trigger |= time.time() - w.get('last_sent', time.time()) > 6 * 3600
+        goal = 'soy' if w.get('goal') == 'soy' else name
         lane = {'supervisor_state': w.get('state'), 'status': status,
-                'goal': read_text(ROOT, f'goals/{name}.md'),
+                'goal': read_text(ROOT, f'goals/{goal}.md'),
                 'notes': read_text(root, 'notes/GOAL.md', 7500, tail=True),
                 'files': {}, 'omitted': [], 'artifacts': {}, 'logs': {}}
         receipts = sorted((root / 'output/verification').glob('*/receipt.json'))

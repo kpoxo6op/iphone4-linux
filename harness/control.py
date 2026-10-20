@@ -154,13 +154,25 @@ def tick(cfg):
             if w.get('state') == 'running':
                 session = api('GET', '/api/session/' + w['session'])
                 if session.get('outcome') in ('failed', 'interrupted'):
+                    messages = api('GET', f"/api/session/{w['session']}/message?limit=2&order=desc")
+                    quota = isinstance(messages, list) and any(
+                        m.get('error', {}).get('type') == 'provider.quota'
+                        and m.get('error', {}).get('status') == 429 for m in messages)
+                    if quota:
+                        attempts = w.get('quota_waits', 0) + 1
+                        w.update(state='quota_wait', quota_waits=attempts, errors=0,
+                                 next_run=time.time() + min(7200, 1800 * 2**min(attempts-1, 2)),
+                                 reason='Free provider quota; retry automatically without paid fallback')
+                        save(cfg)
+                        continue
                     w['state'] = 'retry'
                     raise RuntimeError('OpenCode worker turn did not finish; previous completion notes are stale')
                 if session.get('outcome') == 'succeeded':
                     w['errors'] = 0
+                    w['quota_waits'] = 0
             note_path = Path(w['path']) / 'notes/status.json'
             note = json.loads(note_path.read_text()) if note_path.exists() else {}
-            if not new_feedback and not new_observation and w.get('state') != 'retry' and note.get('status') in ('ready_for_review', 'blocked'):
+            if not new_feedback and not new_observation and w.get('state') not in ('retry', 'quota_wait') and note.get('status') in ('ready_for_review', 'blocked'):
                 w['state'] = 'awaiting_review' if note['status'] == 'ready_for_review' else 'blocked'
                 w['reason'] = note.get('summary', '')
                 save(cfg)
@@ -186,7 +198,10 @@ def tick(cfg):
             w['digest'] = digest
             api('POST', f"/api/session/{w['session']}/agent", {'agent': 'build'}, w['path'])
             api('POST', f"/api/session/{w['session']}/model", {'model': MODEL}, w['path'])
-            prompt = (f"Continue /goals {w['name']}. Read AGENTS.md, goals/{w['name']}.md, "
+            goal = w.get('goal', w['name'])
+            if not goal or any(c not in 'abcdefghijklmnopqrstuvwxyz0123456789-' for c in goal):
+                raise ValueError('Invalid assigned goal name')
+            prompt = (f"Continue /goals {goal}, assigned lane {w['name']}. Read AGENTS.md, goals/{goal}.md, "
                       '.opencode/skills/pstack-iphone/SKILL.md, '
                       'and notes/GOAL.md if present using the shell tool. Work on the next concrete '
                       'experiment. Write notes/GOAL.md and notes/status.json before ending. '
@@ -209,7 +224,7 @@ def tick(cfg):
                            'authorization; other lanes support it in parallel. '
                            'Follow the current AGENTS.md device assignment.')
             api('POST', f"/api/session/{w['session']}/command",
-                {'name': 'goals', 'text': w['name'] + '\n' + prompt}, w['path'])
+                {'name': 'goals', 'text': goal + '\n' + prompt}, w['path'])
             w.update(state='running', last_sent=time.time(), next_run=time.time() + 300,
                      turns=w.get('turns', 0) + 1)
             if new_feedback:

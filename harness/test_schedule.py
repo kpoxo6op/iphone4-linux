@@ -15,6 +15,35 @@ FREE = dict(control.MODEL, enabled=True, status='active', variants=[{'id': 'max'
 
 
 class FreeWorkers(unittest.TestCase):
+    def test_provider_quota_waits_without_accepting_stale_notes_or_exhausting_repairs(self):
+        # Live 429s hit completed sessions when a new goal arrived. They must
+        # resume later, not be mistaken for completion or need owner babysitting.
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp)
+            (root / 'notes').mkdir()
+            (root / 'notes/status.json').write_text('{"status":"ready_for_review"}')
+            worker = {'name': 'qemu', 'goal': 'soy', 'path': temp,
+                      'session': 'ours', 'state': 'running', 'errors': 4}
+            calls = []
+            def api(method, path, *args):
+                calls.append(path)
+                if path.endswith('/active'):
+                    return {}
+                if '/message?' in path:
+                    return [{'error': {'type': 'provider.quota', 'status': 429}}]
+                return {'outcome': 'failed'}
+            with patch.object(control, 'free_route_error', return_value=None), \
+                 patch.object(control, 'api', side_effect=api), patch.object(control, 'save'), \
+                 patch.object(control.time, 'time', return_value=100):
+                control.tick({'workers': [worker]})
+                self.assertEqual(worker['state'], 'quota_wait')
+                self.assertEqual(worker['errors'], 0)
+                self.assertEqual(worker['next_run'], 1900)
+                calls.clear()
+                control.tick({'workers': [worker]})
+                self.assertEqual(worker['state'], 'quota_wait')
+                self.assertFalse(any('/command' in c for c in calls))
+
     def test_unavailable_or_newly_priced_route_is_rejected(self):
         # A provider price/variant change must not turn continuous work into paid work.
         for change in ({'enabled': False}, {'variants': [{'id': 'high'}]},

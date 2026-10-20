@@ -1,0 +1,23 @@
+--- a/src/lib/tinyio/posix.zig
++++ b/src/lib/tinyio/posix.zig
+@@ -261,3 +261,10 @@
+     while (true) {
+-        const rc = lseek_sym(file.handle, offset, posix.SEEK.CUR);
++        // Linux's direct lseek syscall only accepts a machine-word offset.
++        // Match std.Io.Threaded on 32-bit Linux without libc: use llseek
++        // and preserve the full signed 64-bit relative offset.
++        var result: u64 = undefined;
++        const rc = if (builtin.os.tag == .linux and !builtin.link_libc and @sizeOf(usize) == 4)
++            posix.system.llseek(file.handle, @bitCast(offset), &result, posix.SEEK.CUR)
++        else
++            lseek_sym(file.handle, offset, posix.SEEK.CUR);
+         switch (posix.errno(rc)) {
+@@ -276,3 +283,7 @@
+     while (true) {
+-        const rc = lseek_sym(file.handle, @bitCast(offset), posix.SEEK.SET);
++        var result: u64 = undefined;
++        const rc = if (builtin.os.tag == .linux and !builtin.link_libc and @sizeOf(usize) == 4)
++            posix.system.llseek(file.handle, offset, &result, posix.SEEK.SET)
++        else
++            lseek_sym(file.handle, @bitCast(offset), posix.SEEK.SET);
+         switch (posix.errno(rc)) {

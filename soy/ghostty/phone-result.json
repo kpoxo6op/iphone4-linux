@@ -1,0 +1,33 @@
+{
+  "passed": true,
+  "pty_bytes": 96,
+  "checks": [
+    "real_shell_pty",
+    "split_utf8_cyrillic",
+    "ansi_styles",
+    "cursor_erase",
+    "box_drawing",
+    "alternate_screen_restore",
+    "clean_frame",
+    "incremental_update",
+    "resize"
+  ],
+  "parse_ms": 6.806,
+  "total_ms": 101.621,
+  "peak_rss_kib": 1464,
+  "terminal_page_resident_bytes": 794624,
+  "evidence": "real iPhone 4 N90AP, Linux ARMv7; no display or touch claim",
+  "upstream_revision": "b58ef1d678be2747c830bc1b1e6c0a086afecf9a",
+  "zig_version": "0.16.0",
+  "target": "arm-linux-musleabihf",
+  "cpu": "cortex_a8",
+  "simd": false,
+  "tested_at": "2026-10-20",
+  "probe_bytes": 1959280,
+  "sha256": {
+    "soy/ghostty/phone_probe.c": "bbcc8c65fd305645bcd053bcf2c3efd3151a40de85785a12c35e5d8c0149d907",
+    "soy/ghostty/patches/tinyio-linux32-seek.patch": "9e604ee7df801c090e7456dd27b447d7f018dab48450c4de30364b72e2746f23",
+    "output/soy/ghostty-phone-probe": "fff4bc9a54192808daf04ae51005e6470f46b69a7fdc2dc5205ab37be904e195",
+    "output/soy/ghostty-arm/lib/libghostty-vt.a": "0021e546963386c78f0ab5f35207a49b79a326ebb39e62311126491f5a46a992"
+  }
+}

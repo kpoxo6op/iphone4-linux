@@ -23,6 +23,7 @@ Platt over USB; Wi-Fi and touch have not passed hardware tests.
 | File I/O | 4,096-byte write/read with matching SHA-256 over both SSH paths |
 | Wrong SSH key | Rejected over both paths; owner login still worked afterward |
 | Development transfer | Patch roundtrip matched byte-for-byte; kernel log retrieved over tailnet SSH |
+| Endurance | One interactive tailnet SSH session lasted 1,808 seconds, with 31 samples on the same boot |
 
 Builds currently run on the host and are transferred to the phone. No native
 compiler on the phone was tested.
@@ -37,7 +38,7 @@ permissions. Workers are folding these into the next boot procedure. Later
 rebuilt archives have not yet run on the phone.
 
 M4's first boot and USB SSH are demonstrated. M4b's first remote session
-passes, with more reliability checks to finish: a 30-minute session,
+and its 30-minute endurance check pass. More reliability checks remain:
 deliberate link interruption/reconnection, an excluded tailnet identity,
 and a repeat RAM boot with identity restoration. Private copies of the SSH
 host key and Tailscale state exist on Platt; restoration has not been tested.
@@ -81,6 +82,7 @@ and account identifiers. No Apple firmware or enrollment state is published.
   and `20261020-openiboot-ramboot-attempt.log`.
 - Maintainer: `output/hardware/master-phone-smoke.json` and
   `output/hardware/master-tailnet-smoke.json`.
+- Endurance: `output/hardware/tailnet-endurance-20261020/result.json`.
 - The same booted initramfs also passed all seven independent QEMU checks in
   `output/master-initramfs-20261020-2209-isolated/result.json`. That test uses a
   reference kernel and virtual RNG; it does not prove iPhone peripherals.

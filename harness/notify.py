@@ -50,6 +50,10 @@ def critical_events(cfg, records, health, now):
     if control.expired(cfg, now):
         return [event('run-ended', 'The scheduled run window has ended.',
                       'A new run window is needed to continue.')]
+    if any(w.get('state') == 'quota_wait' for w in cfg['workers']):
+        events.append(event('free-quota',
+                            'DeepSeek’s free route returned a provider quota limit.',
+                            'Assignments are saved. Automatic retries back off from 30 minutes to two hours; no paid fallback or action from you is required.'))
     for worker in cfg['workers']:
         lane = worker['name']
         if worker.get('state') == 'limit' or worker.get('errors', 0) >= 5:
