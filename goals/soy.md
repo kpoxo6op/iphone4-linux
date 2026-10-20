@@ -130,6 +130,16 @@ or implement it now. No paid fallback or new worker model route is authorized.
 
 ## Shared product acceptance
 
+Idle display follow-up: the owner's 21 October request is implemented as a
+60-second black-screen timeout in the LVGL runtime; see
+`docs/soy/idle-display.md`. It is not yet deployed or proof of backlight power-off.
+The kernel/drivers lanes must identify the actual N90 backlight controller and
+physical wake input from pinned source, implement brightness/power control,
+then measure off/on and wake on the phone while SSH remains usable. Do not
+substitute successful DPMS, zero framebuffer pixels or synthetic input for
+physical proof. Preserve the current RAM boot during source work. The
+maintainer owns integration and idle deployment when the phone reconnects.
+
 Deliver the first five scenes in this exact order: battery, network, Russian
 Markdown reader, files, settings. Follow docs/soy/design.md. Touch navigation,
 large Cyrillic text, dark-only presentation and useful frame pacing are part

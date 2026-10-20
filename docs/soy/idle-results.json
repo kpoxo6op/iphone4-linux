@@ -1,0 +1,80 @@
+{
+  "date": "2026-10-21",
+  "state": "prepared_not_deployed",
+  "idle_timeout_s": 60,
+  "native": {
+    "passed": true,
+    "checks": {
+      "live_scene_blanks_to_black": true,
+      "diagnostics_do_not_wake_or_render": true,
+      "reload_stays_dark": true,
+      "wake_restores_reader_pixels": true,
+      "remote_navigation_wakes": true,
+      "timeout_can_be_disabled": true,
+      "invalid_timeout_retains_setting": true,
+      "shutdown_while_blanked": true
+    },
+    "error": null,
+    "binary_sha256": "92057faf049dfd16db8b60eacde0dfe1b0ed270cb83bb7cdf64918ff0a8a6208",
+    "scope": "Native process, FIFO, pixels and sanitizer; no phone or backlight-power proof"
+  },
+  "native_scene_regression": {
+    "passed": true,
+    "checks": {
+      "single_writer": true,
+      "reload_keeps_reading_position": true,
+      "scroll_command_clamps_top": true,
+      "last_line_reachable": true,
+      "hot_add_scene": true,
+      "invalid_bundle_retains_pixels": true,
+      "oversized_scene_retains_pixels": true,
+      "excessive_blocks_retains_pixels": true,
+      "remove_active_scene_recovers": true,
+      "clean_shutdown": true
+    },
+    "binary_sha256": "92057faf049dfd16db8b60eacde0dfe1b0ed270cb83bb7cdf64918ff0a8a6208",
+    "scope": "Native process, FIFO, pixels and sanitizer checks; no hardware claims"
+  },
+  "qemu": {
+    "passed": true,
+    "checks": {
+      "virtual_device_discovered": true,
+      "wake_contact_does_not_navigate": true,
+      "next_touch_works_after_wake": true,
+      "held_contact_prevents_idle": true,
+      "live_page_sleeps_without_rendering": true,
+      "ssh_wake_survives_idle": true
+    },
+    "scope": "QEMU ARM virtual touchscreen; no phone hardware proof",
+    "kernel": "6.18.7",
+    "binary_sha256": "6379be90dd269734abe7cf2799becead6597b62aae93269b713c2218c6af1b78"
+  },
+  "phone": {
+    "deployed": false,
+    "reason": "Phone absent from Platt USB and offline in Tailscale",
+    "power_off_verified": false,
+    "physical_wake_verified": false
+  },
+  "hardware_limit": "Black framebuffer only; current phone kernel has no backlight power control",
+  "evidence": {
+    "file": "idle-evidence-2026-10-21.tar.gz",
+    "sha256": "84ef4779d028f8529baaf310e7b907131d0e42ee3eba1d68d05ab4e7778e3f6d"
+  },
+  "project_sources": {
+    "soy/lvgl/CMakeLists.txt": "18dd27d88446513789a490d59b3e3c21205a71071671ed894288c61c213b282f",
+    "soy/lvgl/lv_conf.h": "80f7e5136849b7680752dd7577492f2d7b34bb6ce39ac285e1d91d662bf380e1",
+    "soy/lvgl/pixman.json": "5683b33c3c2e5422b5d4deb34992a45468072f5caa334b61e5b9dd5445c14c62",
+    "soy/lvgl/source.json": "be32376333dd178ecda34f64fb27c389b08e972621e13b34dd0645fe321cd6de",
+    "soy/src/display.c": "a44a6e22f923c6f5d13de8a0cc820cf2c04dc48a21db9c55a8cad8814e2ad6c1",
+    "soy/src/display.h": "a1a595101175e98a884e647ab579aebc0eb9def7cbc7db4468b8d5e37903aa75",
+    "soy/src/pinch_draw.c": "2d11a94fca70b5a55135de002c5df239bab384a302354cf8caecede3157d3b57",
+    "soy/src/pinch_draw.h": "ed2656868d7a423f6cb6afd15aaf2eb71dd56654020da723ec1a6a72f97b7888",
+    "soy/src/scene_data.h": "55d2166ed2f5816d71b6ddcdb3dca8d1555a64c2d9ce61d155f45a0e2b9d0c35",
+    "soy/src/soy.c": "2be32acafbfe363d3f34359b35376dea75ff0826f0f0f4cd5fec4db3230ac02f",
+    "soy/src/touch.c": "515052a7ae0773ecfa47b2cbd3e538a96b309e60488ffdaadafe11bc2e767151",
+    "soy/src/touch_input.c": "576a6ebb453c3b0ad0911a9452f675b6deeeb31e2dd736e672837fb6d0be9fbb",
+    "soy/src/touch_input.h": "23d9e1972dfc6d1382b0da4a1dd0f4d685306acb291b0932f200649562ab6743",
+    "soy/tools/build_touch.py": "b49498e8babbc15261e3128b7365d1b71714c23846a96ac047a083c625a09e49"
+  },
+  "test_harness_correction": "An initial emulator check expected a 2.6-second navigation hold to act as a tap. The runtime correctly treats that as a long press. The check now tests an ordinary tap and a held contact separately; runtime semantics were unchanged."
+}

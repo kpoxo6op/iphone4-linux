@@ -34,3 +34,10 @@ SSH, the current RAM boot and a known working renderer available. No generic
 process kills, kernel reboot, real-time starvation, secret-bearing fixtures or
 private SSH configuration in evidence. A passing runtime check does not close
 the still-failing frame gate.
+
+Idle policy has a separate process check: `soy/tools/check_idle.py`. It protects
+inactivity from telemetry/AI updates and verifies black pixels plus exact reader
+restoration. `check_touch.py --only idle` exercises wake-contact suppression,
+held contacts, the next actionable touch and SSH wake. Use `--scope qemu` for
+emulator runs; never report those as phone tests. Neither check proves backlight
+power-off. Follow `docs/soy/idle-display.md` for the remaining hardware gate.

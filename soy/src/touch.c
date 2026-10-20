@@ -63,6 +63,9 @@ static lv_obj_t *sheet_picture;
 static lv_obj_t *sheet_shield;
 static lv_display_t *display;
 static lv_indev_t *pointer;
+static lv_obj_t *blank_screen;
+static unsigned idle_seconds = 60;
+static int wake_contact;
 static uint32_t fallback_pixels[W * H];
 static uint32_t *pixels = fallback_pixels;
 static int direct_display;
@@ -968,6 +971,52 @@ static void end_preview(int commit) {
   }
   preview_scale = 1;
 }
+static void wake_display(void) {
+  lv_display_trigger_activity(display);
+  if (!blank_screen)
+    return;
+  lv_obj_delete(blank_screen);
+  blank_screen = NULL;
+  lv_timer_resume(lv_display_get_refr_timer(display));
+  lv_timer_ready(lv_display_get_refr_timer(display));
+  lv_obj_invalidate(lv_screen_active());
+}
+static void sleep_display(void) {
+  if (blank_screen)
+    return;
+  end_preview(0);
+  zoom_pending = -1;
+  cancel_motion();
+  if (sheet)
+    close_sheet();
+  wake_contact = contacts_active != 0;
+  pointer_pressed = multi_latched = 0;
+  primary = -1;
+  lv_indev_touch_data_t released[SOY_CONTACTS];
+  for (int i = 0; i < SOY_CONTACTS; i++)
+    released[i] = (lv_indev_touch_data_t){.id = i, .state = LV_INDEV_STATE_RELEASED};
+  lv_indev_gesture_recognizers_update(pointer, released, SOY_CONTACTS);
+  /* simpledrm has no panel/backlight power control. Keep this honest: black
+   * pixels and paused rendering, not hardware power-off or system suspend. */
+  blank_screen = lv_obj_create(lv_layer_sys());
+  flat(blank_screen);
+  lv_obj_set_style_bg_color(blank_screen, lv_color_black(), 0);
+  lv_obj_set_size(blank_screen, W, H);
+  lv_obj_set_scrollable(blank_screen, false);
+  lv_refr_now(display);
+  lv_timer_pause(lv_display_get_refr_timer(display));
+}
+static int set_idle_timeout(const char *s) {
+  if (!*s || strspn(s, "0123456789") != strlen(s))
+    return -1;
+  char *end;
+  errno = 0;
+  unsigned long seconds = strtoul(s, &end, 10);
+  if (errno || *end || seconds > 86400)
+    return -1;
+  idle_seconds = seconds;
+  return 0;
+}
 static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
   double began = now();
   static unsigned batch;
@@ -976,6 +1025,27 @@ static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
   if (fresh) {
     input_sequence = f.sequence;
     input_time = now();
+    if (f.active && !f.cancel) {
+      lv_display_trigger_activity(display);
+      if (blank_screen && !wake_contact) {
+        wake_display();
+        wake_contact = 1;
+      }
+    }
+    /* The entire waking contact sequence belongs to wake, including a second
+     * finger. It must not tap a control, scroll, or enter a pinch recognizer. */
+    if (blank_screen || wake_contact) {
+      contacts_active = f.active;
+      if (!f.active || f.cancel)
+        wake_contact = 0;
+      data->state = LV_INDEV_STATE_RELEASED;
+      data->point = pointer_point;
+      data->continue_reading = ++batch < 64;
+      if (!data->continue_reading)
+        batch = 0;
+      input_time = 0;
+      return;
+    }
     if (f.cancel) {
       end_preview(0);
       cancel_motion();
@@ -1280,7 +1350,9 @@ static void status(void) {
           "events\":%lu,\"tap_events\":%lu,\"frames\":%lu,\"render_present_avg_"
           "ms\":%.3f,\"render_present_p95_ms\":%.3f,\"render_present_max_ms\":%"
           ".3f,\"input_present_max_ms\":%.3f,\"transfer_avg_ms\":%.3f,"
-          "\"transfer_max_ms\":%.3f,\"scanout_verified\":false}\n",
+          "\"transfer_max_ms\":%.3f,\"scanout_verified\":false,"
+          "\"display_state\":\"%s\",\"idle_timeout_s\":%u,"
+          "\"inactive_ms\":%u,\"backlight_power_control\":false}\n",
           headless         ? "headless"
           : direct_display ? "simpledrm"
                            : "framebuffer",
@@ -1293,11 +1365,28 @@ static void status(void) {
           soy_input_drops(), input_sequence, pinch_events, tap_events, frames,
           frames ? render_sum / frames : 0, n ? sorted[(n - 1) * 95 / 100] : 0,
           render_max, latency_max, frames ? transfer_sum / frames : 0,
-          transfer_max);
+          transfer_max, blank_screen ? "blanked" : "awake", idle_seconds,
+          lv_display_get_inactive_time(display));
   fclose(f);
   rename(tmp, p);
 }
 static void command(char *s) {
+  if (!strcmp(s, "sleep")) {
+    sleep_display();
+    return;
+  }
+  if (!strcmp(s, "wake")) {
+    wake_display();
+    return;
+  }
+  if (!strncmp(s, "idle ", 5)) {
+    if (set_idle_timeout(s + 5))
+      fprintf(stderr, "Idle timeout must be 0..86400 seconds\n");
+    return;
+  }
+  if (!strcmp(s, "next") || !strcmp(s, "prev") ||
+      !strncmp(s, "goto ", 5) || !strncmp(s, "scroll ", 7))
+    wake_display();
   if (!strcmp(s, "next"))
     go(current + 1, 1);
   else if (!strcmp(s, "prev"))
@@ -1321,7 +1410,8 @@ static void command(char *s) {
   else if (!strcmp(s, "capture")) {
     char p[600];
     path(p, sizeof p, rundir, "frame.ppm");
-    lv_refr_now(display);
+    if (!blank_screen)
+      lv_refr_now(display);
     capture(p);
   } else if (!strcmp(s, "quit"))
     stopping = 1;
@@ -1363,7 +1453,12 @@ int main(int argc, char **argv) {
       headless = 1;
     else if (!strcmp(argv[i], "--check"))
       check = 1;
-    else if (!strcmp(argv[i], "--render") && i + 1 < argc) {
+    else if (!strcmp(argv[i], "--idle-seconds") && i + 1 < argc) {
+      if (set_idle_timeout(argv[++i])) {
+        fprintf(stderr, "Idle timeout must be 0..86400 seconds\n");
+        return 2;
+      }
+    } else if (!strcmp(argv[i], "--render") && i + 1 < argc) {
       render = headless = 1;
       output = argv[++i];
     } else if (!strcmp(argv[i], "--scene") && i + 1 < argc)
@@ -1446,6 +1541,7 @@ int main(int argc, char **argv) {
   lv_refr_now(display);
   if (render)
     return capture(output) ? 2 : 0;
+  lv_display_trigger_activity(display);
   path(p, sizeof p, rundir, "control");
   struct stat st;
   if (lstat(p, &st)) {
@@ -1468,8 +1564,10 @@ int main(int argc, char **argv) {
     int moving = contacts_active || lv_obj_is_scrolling(pager) ||
                  lv_obj_is_scrolling(views[current].body) ||
                  (sheet && lv_obj_is_scrolling(sheet));
-    if (moving)
+    if (moving && !blank_screen) {
       prepare_after = t + .15;
+      lv_display_trigger_activity(display);
+    }
     /* Each source still samples once per second during gestures. Spread the
      * independent reads across frames instead of blocking one frame on all
      * telemetry and device discovery at once. */
@@ -1497,7 +1595,7 @@ int main(int argc, char **argv) {
         nextstats = t + .2;
       /* Updating a live scene while fingers or animations are active would
        * discard motion. Rebuild telemetry only when that page is resting. */
-      if (stat_phase == 3 && strstr(scenes[current].body, "{{") &&
+      if (!blank_screen && stat_phase == 3 && strstr(scenes[current].body, "{{") &&
           !contacts_active && !sheet && !lv_obj_is_scrolling(pager) &&
           !lv_obj_is_scrolling(views[current].body)) {
         int scroll = lv_obj_get_scroll_y(views[current].body);
@@ -1528,10 +1626,15 @@ int main(int argc, char **argv) {
       rebuild_pending = 0;
       build_pages();
     }
-    if (t >= prepare_after && !moving && !sheet && !multi_latched &&
+    if (!blank_screen && t >= prepare_after && !moving && !sheet && !multi_latched &&
         !pointer_pressed)
       prepare_page();
-    lv_timer_handler();
+    if (!blank_screen) {
+      lv_timer_handler();
+      if (idle_seconds && !contacts_active &&
+          lv_display_get_inactive_time(display) >= idle_seconds * 1000u)
+        sleep_display();
+    }
     if (t >= nextstatus) {
       double began = now();
       status();
@@ -1544,14 +1647,18 @@ int main(int argc, char **argv) {
     /* A refresh that exceeded its period is already due. Do not add a
      * mandatory extra millisecond to every late frame. Idle timers still wait.
      */
-    uint32_t wait = lv_timer_get_time_to_next();
-    poll(fds, nfds, clamp(wait, 0, 8));
+    uint32_t wait = blank_screen ? 100 : lv_timer_get_time_to_next();
+    poll(fds, nfds, blank_screen ? 100 : clamp(wait, 0, 8));
     for (int i = 1; i < nfds; i++)
       if (fds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
         /* Preserve LVGL's bounded input processing and timer ownership. A
          * queued contact must not wait for the next periodic input tick. */
-        lv_timer_ready(lv_indev_get_read_timer(pointer));
-        lv_timer_ready(lv_display_get_refr_timer(display));
+        if (blank_screen)
+          lv_indev_read(pointer);
+        else {
+          lv_timer_ready(lv_indev_get_read_timer(pointer));
+          lv_timer_ready(lv_display_get_refr_timer(display));
+        }
         break;
       }
     if (fds[0].revents & POLLIN) {
@@ -1584,6 +1691,8 @@ int main(int argc, char **argv) {
   if (lockfd >= 0)
     close(lockfd);
   end_preview(0);
+  if (blank_screen)
+    lv_obj_delete(blank_screen);
   lv_obj_clean(lv_screen_active());
   for (int i = 0; i < NS; i++) {
     free_blocks(&views[i]);

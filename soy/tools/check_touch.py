@@ -15,6 +15,7 @@ p.add_argument("--ssh-config", required=True, type=Path)
 p.add_argument("--replay", required=True, type=Path)
 p.add_argument("--out", required=True, type=Path)
 p.add_argument("--only", default="")
+p.add_argument("--scope", choices=("phone", "qemu"), default="phone")
 a = p.parse_args()
 a.out.mkdir(parents=True, exist_ok=True)
 ssh = [
@@ -31,6 +32,7 @@ checks = {}
 evidence = {}
 replay = None
 samples = []
+idle_timeout = None
 
 
 def remote(cmd, data=None):
@@ -144,6 +146,7 @@ try:
     ):
         raise RuntimeError("replay not ready")
     start = wait(lambda s: s["virtual_inputs"] == 1, 8)
+    idle_timeout = start.get("idle_timeout_s")
     evidence["start"] = start
     assert_check("virtual_device_discovered", start["virtual_inputs"] == 1)
     if a.only in ("", "navigation"):
@@ -457,6 +460,47 @@ try:
         up()
         wait(lambda s: s["scene"] == "files")
         assert_check("navigation_after_overflow", True)
+    if a.only in ("", "idle"):
+        goto("reader", 1280)
+        command("scroll -9600")
+        wait(lambda s: s["scroll"] == 0)
+        command("idle 2")
+        command("sleep")
+        wait(lambda s: s["display_state"] == "blanked")
+        down(440, 902)  # Over the next-page hit region: wake must consume it.
+        wait(lambda s: s["display_state"] == "awake")
+        send("wait 2600")
+        held = state()
+        up()
+        time.sleep(0.2)
+        after = state()
+        assert_check(
+            "wake_contact_does_not_navigate",
+            held["display_state"] == "awake"
+            and after["scene"] == "reader"
+            and after["page_x"] == 1280
+            and after["scroll"] == 0
+            and after["panel"] == 0,
+            after,
+        )
+        down(440, 902)
+        up()
+        wait(lambda s: s["scene"] == "files")
+        assert_check("next_touch_works_after_wake", True)
+        down(320, 40)
+        send("wait 2600")
+        assert_check("held_contact_prevents_idle", state()["display_state"] == "awake")
+        up()
+        asleep = wait(lambda s: s["display_state"] == "blanked")
+        time.sleep(1)
+        after = state()
+        assert_check(
+            "live_page_sleeps_without_rendering",
+            after["display_state"] == "blanked" and after["frames"] == asleep["frames"],
+        )
+        command("wake")
+        wait(lambda s: s["display_state"] == "awake")
+        assert_check("ssh_wake_survives_idle", True)
     evidence["finish"] = state()
 except Exception as e:
     evidence["error"] = str(e)
@@ -474,11 +518,21 @@ finally:
         except Exception:
             replay.terminate()
             replay.wait(timeout=5)
+    if idle_timeout is not None:
+        try:
+            command(f"idle {idle_timeout}")
+            command("wake")
+        except Exception as exc:
+            evidence["error"] = f"Cannot restore idle policy: {exc}"
     result = {
         "passed": bool(checks) and all(checks.values()) and "error" not in evidence,
         "checks": checks,
         "evidence": evidence,
-        "scope": "Real phone virtual touchscreen; physical digitizer remains unverified",
+        "scope": (
+            "Real phone virtual touchscreen; physical digitizer remains unverified"
+            if a.scope == "phone"
+            else "QEMU ARM virtual touchscreen; no phone hardware proof"
+        ),
     }
     (a.out / "result.json").write_text(json.dumps(result, indent=2) + "\n")
     print(json.dumps({"passed": result["passed"], "checks": checks}), flush=True)

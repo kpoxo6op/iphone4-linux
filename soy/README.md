@@ -71,6 +71,38 @@ Independent telemetry reads are staggered while retaining one-second sampling.
 The [Opus 5.5 review](../docs/soy/review-2026-10-21.md) records these decisions
 and the remaining cold-start, live-update and display-copy work.
 
+## Idle display
+
+The LVGL runtime blanks after **60 seconds without interaction**. Contacts and
+scrolling keep it awake; telemetry, scene reloads and diagnostic captures do
+not. Blanking pauses rendering and retains the current scene, type size and
+reading position. The first waking contact is consumed until every finger
+lifts. Remote navigation also wakes the display. SSH and Tailscale are separate
+processes and the system is never suspended.
+
+This is currently **black pixels, not backlight power-off**. The boot framebuffer
+has no backlight driver, and physical touch is still unavailable. Remote wake
+is the available operator path. [Evidence and remaining hardware work](../docs/soy/idle-display.md).
+
+The private `/run/soy/control` FIFO accepts `sleep`, `wake`, and `idle SECONDS`
+(0 disables automatic blanking, maximum 86400). For example, over the existing
+private SSH connection:
+
+```sh
+printf 'wake\n' > /run/soy/control
+printf 'idle 120\n' > /run/soy/control
+```
+
+Set `--idle-seconds 120` at process startup to change the default. FIFO changes
+last until that process exits. `/run/soy/status.json` reports `display_state`
+(`awake` or `blanked`), `idle_timeout_s`, `inactive_ms`, and
+`backlight_power_control: false`. The old fallback renderer is unchanged.
+
+```sh
+python3 soy/tools/check_idle.py --binary output/soy/lvgl-native-asan/soy \
+  --out output/soy-idle-check
+```
+
 `tools/make_fonts.py` bakes DejaVu Sans Mono masks using Pillow on the host.
 The phone needs no font library. Font provenance and license are in `assets/`.
 The runtime is a text scene renderer; it does not yet implement a terminal
