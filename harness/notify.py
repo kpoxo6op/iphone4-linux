@@ -125,8 +125,16 @@ def send(text):
                         timeout=25, check=True)
         channels = json.loads(status.stdout[status.stdout.index('{'):])
         accounts = channels.get('channelAccounts', {}).get('telegram', [])
-        if not any(a.get('accountId') == config['account'] and a.get('connected')
-                   and a.get('probe', {}).get('ok') for a in accounts):
+        # A stale gateway channel catalog can say "unknown channel" while
+        # Telegram polling and the message CLI still work (observed on Platt).
+        # In that case let the actual send determine delivery; its acknowledgement
+        # is still required below. A known disconnected account stays queued.
+        missing_catalog = (channels.get('configOnly') is True
+                           and channels.get('error') == 'unknown channel: telegram'
+                           and channels.get('gatewayAuthUnavailable') is False)
+        if not missing_catalog and not any(
+                a.get('accountId') == config['account'] and a.get('connected')
+                and a.get('probe', {}).get('ok') for a in accounts):
             raise Offline()
     except (sp.SubprocessError, ValueError, OSError) as exc:
         raise Offline() from exc

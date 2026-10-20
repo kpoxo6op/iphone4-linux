@@ -31,6 +31,12 @@ the same alert ID identifies any duplicate. An unconfirmed third attempt is
 recorded as delivery_unknown. Telegram acknowledged the one-off setup test
 on 2026-10-20 NZDT; the delivery ID stays in the private local ledger.
 
+The first real-phone Tailscale milestone report was also delivered that day.
+It exposed a stale OpenClaw gateway catalog: status said `unknown channel:
+telegram` while polling and the message CLI worked. For that specific status
+failure the notifier now attempts the normal message CLI and still requires
+a delivery identifier. A known disconnected account remains queued.
+
 This is a laptop monitor. It cannot report while the laptop is asleep, powered
 off, or disconnected; the timer catches up after it returns. It does not
 provide an independent check of its own process or of a dead laptop. Reports

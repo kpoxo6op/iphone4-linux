@@ -2,6 +2,7 @@
 import unittest
 import json
 from pathlib import Path
+import subprocess
 import tempfile
 from unittest.mock import patch
 
@@ -10,6 +11,50 @@ import review
 
 
 class CriticalAlerts(unittest.TestCase):
+    def test_missing_gateway_catalog_uses_real_delivery_acknowledgement(self):
+        # Real regression: Telegram polled and message send worked, but the
+        # status catalog was empty. Guest tests cannot exercise this API failure.
+        status = {'configOnly': True, 'gatewayAuthUnavailable': False,
+                  'error': 'unknown channel: telegram'}
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / 'claw.json').write_text(json.dumps({
+                'channels': {'telegram': {'allowFrom': ['123']}}}))
+            (root / 'config.json').write_text(json.dumps({
+                'openclaw_config': str(root / 'claw.json'), 'target': '123',
+                'account': 'test', 'command': '/fixture/openclaw'}))
+            for response, accepted in [({'payload': {'messageId': '456'}}, True),
+                                       ({'payload': {}}, False)]:
+                with self.subTest(response=response), patch.object(notify, 'DATA', root), \
+                        patch.object(notify.sp, 'run', side_effect=[
+                            subprocess.CompletedProcess([], 0, json.dumps(status)),
+                            subprocess.CompletedProcess([], 0, json.dumps(response))
+                        ]) as run:
+                    if accepted:
+                        self.assertEqual(notify.send('Fixture alert'), '456')
+                    else:
+                        with self.assertRaises(ValueError):
+                            notify.send('Fixture alert')
+                    self.assertEqual(run.call_args.args[0][1:3], ['message', 'send'])
+
+    def test_known_disconnected_account_still_queues_without_sending(self):
+        # Catalog fallback must not turn a confirmed outage into send retries.
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / 'claw.json').write_text(json.dumps({
+                'channels': {'telegram': {'allowFrom': ['123']}}}))
+            (root / 'config.json').write_text(json.dumps({
+                'openclaw_config': str(root / 'claw.json'), 'target': '123',
+                'account': 'test', 'command': '/fixture/openclaw'}))
+            status = {'channelAccounts': {'telegram': [
+                {'accountId': 'test', 'connected': False, 'probe': {'ok': False}}]}}
+            with patch.object(notify, 'DATA', root), patch.object(
+                    notify.sp, 'run', return_value=subprocess.CompletedProcess(
+                        [], 0, json.dumps(status))) as run:
+                with self.assertRaises(notify.Offline):
+                    notify.send('Fixture alert')
+                self.assertEqual(run.call_count, 1)
+
     def test_normal_review_queue_is_quiet_but_limits_and_user_decisions_alert(self):
         cfg = {'deadline': 1000, 'workers': [{'name': 'qemu', 'state': 'awaiting_review'}]}
         health = {'review timer': (True, True)}
