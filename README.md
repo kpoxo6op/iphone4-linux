@@ -16,9 +16,15 @@ can come first; touch and Wi-Fi do not block the initial tailnet path.
 
 ## Current work
 
-The phone is connected and identified as N90AP. The kernel worker now has
-[direct USB access](docs/first-connection.md) for boot and flashing experiments.
-The other workers prepare userspace and drivers in parallel.
+**Linux is running on the real phone.** On 20 October 2026, the N90AP booted
+Linux 6.17.0-rc1 and joined Tailscale. SSH works over both USB and the phone's
+own tailnet connection. Interactive terminals, file read/write and rejection
+of a wrong SSH key passed on the hardware.
+
+It boots into RAM and gets Internet through Platt's USB connection. Reboot
+recovery, Wi-Fi, touch and persistent installation are still work ahead.
+See the [first-boot evidence](docs/first-phone-attempt.md) and
+[access from Platt](docs/platt-usb.md).
 
 Three independent OpenCode workers are assigned [goals](goals/README.md):
 
@@ -64,6 +70,20 @@ image or claim iPhone hardware support.
 Requires Python 3, qemu-system-arm, OpenSSH client and e2fsprogs on Linux.
 The worker supplies `zImage`, `vexpress-v2p-ca9.dtb`, and `rootfs.ext4`.
 There are no prebuilt images in this initial scaffold.
+
+`harness/probe_initramfs.py` separately tests the unchanged phone initramfs
+with a QEMU vexpress reference kernel:
+
+```sh
+python3 harness/probe_initramfs.py --initramfs PATH --kernel PATH --dtb PATH \
+  --key PATH --out NEW_DIRECTORY
+```
+
+The key must match one already authorized in the archive. This catches
+failures in `/init`, BusyBox init, Dropbear, PTY allocation and file I/O that
+an overlay-on-ext4 test can miss. It also rejects a wrong SSH key. The
+reference kernel, virtual RNG and virtual network cannot validate the
+phone's kernel, TUN module or peripherals.
 
 ## Long-running work
 

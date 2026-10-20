@@ -4,6 +4,13 @@ The actual iPhone runs Linux, its own tailscaled, and SSH, so authorized machine
 can develop and inspect it remotely. Completion requires a real connection to
 the phone's own tailnet node, not just installed packages or a tunnel to a laptop.
 
+**20 October 2026:** the first real-phone session passed. Linux 6.17.0-rc1
+and Tailscale 1.104.1 ran on N90AP with kernel TUN and USB-shared Internet.
+The maintainer verified tailnet SSH, interactive PTY, file write/read/hash,
+wrong-key rejection and owner access afterward. The reliability and tailnet
+policy checks below remain open; this is not full milestone acceptance.
+See [the boot record](../docs/first-phone-attempt.md).
+
 ## Implementation order
 
 1. M1–M3 provide ARMv7 userspace and a reproducible N90 kernel; M4 proves phone

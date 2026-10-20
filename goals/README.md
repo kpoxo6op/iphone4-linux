@@ -11,10 +11,15 @@
 | M5 | Wi-Fi and touch | Reviewed driver patches, then actual packets and input events | drivers / phone |
 | M6 | Persistent storage and usable handheld | Recovery plan, tested storage mapping, safe power behavior | Requires phone |
 
-M1–M3 can be attempted now. M4–M6 cannot be accepted without the actual phone.
-The drivers worker can prepare evidence and compile-tested patches for M5, but
-must stop before claiming hardware works. Stable USB networking should precede
-Wi-Fi; RAM rootfs should precede NAND. Exact phone variant must be confirmed.
+**20 October 2026:** M4's first RAM boot and USB SSH passed on the real N90AP.
+The phone also joined Tailscale; shell, PTY, file I/O and wrong-key rejection
+passed through its own tailnet node. [Exact artifacts and evidence](../docs/first-phone-attempt.md)
+are recorded. M4b remains open for endurance, interrupted-link recovery,
+an excluded tailnet identity check and a repeat RAM boot with identity restoration.
+
+The drivers worker prepares evidence and compile-tested patches for M5, but
+must stop before claiming untested hardware works. Stable USB networking
+precedes Wi-Fi; RAM rootfs precedes NAND.
 
 The cable is now available. [First-connection assignments](cable-day.md) cover
 model identification, the RAM bootloader and the USB remote-access handoff.
@@ -22,8 +27,8 @@ model identification, the RAM bootloader and the USB remote-access handoff.
 **M4b is the main product milestone.** Run Tailscale on the phone so subsequent
 bring-up can happen remotely. USB-shared Internet can come first; Wi-Fi, touch
 and TUI polish are not prerequisites. Installing binaries alone is not a pass.
-Prepare ARM packages and init/tests after M1–M3; actual enrollment/connectivity
-remain pending until the phone is available. Do not require NAND installation.
+The first enrollment and connection now work on hardware. Finish the
+reliability checks without requiring NAND installation.
 
 [GitHub goals](https://github.com/kpoxo6op/iphone4-linux/issues) track scope and
 review. See the [agent workflow](../docs/agent-workflow.md).
