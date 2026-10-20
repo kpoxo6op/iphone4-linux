@@ -31,10 +31,14 @@ and TUI polish are not prerequisites. Installing binaries alone is not a pass.
 The first enrollment and connection now work on hardware. Finish the
 reliability checks without requiring NAND installation.
 
-Soy now renders on the real framebuffer. The current focus is
-[Ghostty-informed rendering performance](../docs/soy/performance.md), touch and
-Wi-Fi drivers, plus reliable deployment. Its design basis is saved in
-[foundations](../docs/soy/foundations.md), not left in chat.
+Soy now renders on the real framebuffer. [Active worker assignments](soy.md)
+add battery/network, reader/storage/settings and display performance alongside
+recovery and driver work. Its design basis is saved in
+[foundations](../docs/soy/foundations.md).
+
+[Expanded touch and the growing-plant boot animation](../docs/soy/future-work.md)
+are planned only. The animation's research and frame studies must be committed
+before production work. Neither project is activated by this backlog entry.
 
 [GitHub goals](https://github.com/kpoxo6op/iphone4-linux/issues) track scope and
 review. See the [agent workflow](../docs/agent-workflow.md).

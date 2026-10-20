@@ -1,7 +1,92 @@
 # Soy: scenes on the real iPhone
 
-Owner: master for design/runtime; DeepSeek kernel and drivers lanes for hardware;
-DeepSeek qemu lane for deployment, crash recovery and repeatable checks.
+Owner: DeepSeek workers implement the screens and runtime; the master reviews
+bounded handoffs. Existing recovery, remote-access and hardware goals remain
+active. The owner requested this delegation on 20 October 2026.
+
+## Current assignments
+
+All lanes read this whole goal, then work only on their assignment below.
+Start from the published Soy source in `/seed/handoff/soy-master-source.tar.gz`.
+Record its commit and archive hash. Keep an isolated working copy and deliver
+small patches against that baseline under the owned paths below; do not edit
+the master checkout, governance or another lane's files.
+
+**drivers — battery first, then network.** Work in `research/soy-screens/`;
+hardware patches remain in `patches/experimental/`. Continue the existing
+Wi-Fi, touch-device and battery-driver investigation alongside screen work.
+
+- Battery: make remaining charge immediately legible, with charge state and
+  a useful usage/history graph. Read actual power-supply telemetry when
+  available. Missing capacity, an unplugged source, invalid values and a fresh
+  history must each remain honest. Never infer capacity from uptime or invent
+  a discharge curve. No estimated time remaining without defensible evidence.
+- Network: show the actual active link, Wi-Fi association state, receive/send
+  rates with units and a time-labelled history. Handle no interface, no route,
+  counter reset and link changes. Do not claim Internet access from an
+  interface merely existing. No SSID/password or account details in screenshots.
+- A missing phone driver does not block implementing and rendering the screen.
+  Use clearly labelled offline fixtures for missing/zero/charging/discharging
+  or disconnected/idle/busy cases. Deliver the real telemetry adapter too;
+  fixture results cannot establish hardware support.
+- Handoff: scene files, narrowly scoped telemetry patches, native and logical
+  size captures, executable boundary checks, and the exact missing hardware
+  evidence. Keep driver bring-up notes separate from UI fixture results.
+
+**qemu — recovery plus reader, storage and settings.** Work in `soy-runtime/`.
+Keep the existing supervisor, update rollback and crash-recovery work. Alternate
+bounded recovery and screen deliverables so neither disappears behind a rewrite.
+
+- Reader first: preserve the third scene and the Russian author's wording.
+  Make headings, emphasis, paragraphs, quotes, links and code readable at the
+  existing large type scale. Verify long words, mixed scripts, beginning/middle/
+  end, retained reading position and valid/invalid reload. The last line must
+  be reachable. Keep link behavior honest; no decorative button that does nothing.
+- Storage next: distinguish RAM rootfs, memory and actual mounted flash.
+  Use consistent units; handle absent, zero, full and changing measurements.
+- Settings stays a quiet, explicitly read-only specimen. No new preferences,
+  pretend toggles, branding or instructional footer.
+- Use the pinned libghostty-vt for any PTY-backed scene. Its successful phone
+  probe is the starting point. Prove child-process cleanup and bounded
+  scrollback. Do not replace the readable Markdown scene until the replacement
+  passes its visual and behavioral checks; no homemade ANSI parser.
+- Handoff each screen separately, plus recovery evidence. A killed UI, invalid
+  bundle and repeated deployment must leave independent SSH usable. Document
+  what requires the kernel operator rather than claiming an unrun phone test.
+
+**kernel — recovery and display performance.** Work in `phone/soy-display/`
+and the existing phone paths. Keep repeatable RAM boot and private identity
+restoration ahead of optional presentation experiments. Remain the sole USB
+operator; other lanes send artifacts rather than racing the device.
+
+- Measure complete frame cadence, longest stalls and input-to-completed-frame
+  latency for the existing scene/scroll workload. Preserve the previous working
+  display and SSH path. Start with the documented pwrite baseline, then make
+  one source-grounded improvement at a time. No kernel reflash for an experiment
+  that can run in userspace.
+- Report cold and warm results, memory and idle CPU. The target remains 60 Hz
+  during motion, not 60 identical idle redraws. Distinguish framebuffer writes
+  from verified physical scanout. Do not certify smoothness from a copy loop.
+- Support the existing touch-device bring-up, but do not implement the deferred
+  gesture expansion or boot animation described below.
+
+## Delivery and scope
+
+For every screen: state its purpose, explain the relevant existing design
+principles, inspect captures at 640 × 960 and 320 × 480, and supply a small
+reproducible process-boundary test for a credible failure. No test counts,
+source-text assertions or visual approval invented by the worker. Record
+commands, exit status, artifact hashes, limitations and next action in
+`notes/GOAL.md` and `notes/status.json`. Submit one bounded result for review
+before starting a wholesale redesign. Do not repeat passing work without a
+changed input or concrete failure.
+
+[Future touch and boot art](../docs/soy/future-work.md) is **planning only**.
+Do not implement it, research it now, or start it automatically after these
+assignments. The senior reviewer must preserve this boundary. No additional
+paid model or new model route is authorized.
+
+## Shared product acceptance
 
 Deliver the first five scenes in this exact order: battery, network, Russian
 Markdown reader, files, settings. Follow docs/soy/design.md. Touch navigation,
