@@ -169,6 +169,11 @@ def phone_events(observation, now):
         return []
     if not fresh or age < 120:
         return []
+    if observation.get('status') == 'no_device' and observation.get('last_linux_usb_at'):
+        return [event('phone:linux-usb-lost',
+                      'The previously connected Linux iPhone has disappeared from USB. A cable can remain plugged in when the phone stops responding.',
+                      'Automatic connection checks continue. If it stays offline, reconnect the phone-end 30-pin connector when you can. A frozen phone may then need a physical button reset; SSH cannot reach it while USB is unavailable.',
+                      'kernel')]
     actions = {
         'identity_unavailable': (
             'Platt sees an Apple mobile device but cannot confirm its model.',
@@ -185,6 +190,23 @@ def phone_events(observation, now):
         return []
     text, action = actions[status]
     return [event('phone:' + status, text, action)]
+
+
+def reconnect_events(observation, recovered, now):
+    # Old successful probes must never contradict a stale or absent phone.
+    try:
+        age = now - datetime.fromisoformat(observation['checked_at']).timestamp()
+    except (KeyError, TypeError, ValueError):
+        return []
+    if not 0 <= age < 300 or observation.get('status') != 'linux_usb' or recovered.get('state') != 'recovered':
+        return []
+    text = 'The iPhone answered authenticated USB SSH after the outage. Kernel diagnostics were saved privately.'
+    if recovered.get('tailnet_same_boot'):
+        text += ' Tailscale SSH also reached the same Linux boot.'
+    else:
+        text += ' Tailscale access is not yet confirmed.'
+    return [event('phone:reconnected:' + recovered['outage_since'], text,
+                  'No physical action is needed for this connection recovery.', 'kernel')]
 
 
 def check(test=False):
@@ -218,6 +240,9 @@ def check(test=False):
             elif now - datetime.fromisoformat(observation['checked_at']).timestamp() > 300:
                 events.append(event('phone-watch-stale', 'The iPhone connection watcher is not producing fresh observations.',
                                     'A maintainer needs to inspect the failed identification service.'))
+            reconnect = control.STATE / 'phone/private/reconnect.json'
+            if reconnect.exists():
+                events += reconnect_events(observation, json.loads(reconnect.read_text()), now)
         expected = any(w.get('state') not in ('awaiting_review', 'blocked', 'stopped', 'limit')
                        for w in cfg['workers'])
         if expected and not unit_health(control.UNIT + '.service')[1]:

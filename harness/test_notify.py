@@ -1,6 +1,7 @@
 """User-visible alert contracts; guest boot tests cannot cover Telegram delivery."""
 import unittest
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 import subprocess
 import tempfile
@@ -11,6 +12,16 @@ import review
 
 
 class CriticalAlerts(unittest.TestCase):
+    def test_recovery_report_requires_fresh_usb_observation_and_verified_ssh(self):
+        # A successful old probe plus a dead watcher must not send an all-clear.
+        # Guest/SSH tests cannot cover this host notification boundary.
+        observation = {'status': 'linux_usb', 'checked_at': datetime.fromtimestamp(1000, timezone.utc).isoformat()}
+        recovered = {'state': 'recovered', 'outage_since': 'fixture', 'tailnet_same_boot': True}
+        self.assertEqual(len(notify.reconnect_events(observation, recovered, 1010)), 1)
+        self.assertEqual(notify.reconnect_events(observation, recovered, 1400), [])
+        self.assertEqual(notify.reconnect_events({**observation, 'status': 'no_device'}, recovered, 1010), [])
+        self.assertEqual(notify.reconnect_events(observation, {**recovered, 'state': 'waiting_ssh'}, 1010), [])
+
     def test_missing_gateway_catalog_uses_real_delivery_acknowledgement(self):
         # Real regression: Telegram polled and message send worked, but the
         # status catalog was empty. Guest tests cannot exercise this API failure.

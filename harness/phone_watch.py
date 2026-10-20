@@ -11,6 +11,7 @@ import subprocess as sp
 
 import control
 import usb_device_nodes
+import phone_reconnect
 
 DATA = control.STATE / 'phone'
 KEYS = {
@@ -124,6 +125,12 @@ def check():
     value['observed_since'] = (old.get('observed_since', value['checked_at'])
                               if old.get('event_id') == value['event_id']
                               else value['checked_at'])
+    # A cable that has never arrived is quiet. Losing an already-running
+    # phone is an outage, including across watcher/service restarts.
+    if value['status'] == 'linux_usb' and value.get('identity', {}).get('HardwareModel') == 'N90AP':
+        value['last_linux_usb_at'] = value['checked_at']
+    elif old.get('last_linux_usb_at'):
+        value['last_linux_usb_at'] = old['last_linux_usb_at']
     atomic(previous, value)
     for worker in cfg['workers']:
         atomic(Path(worker['path']) / '.opencode/phone-observation.json', value)
@@ -134,6 +141,7 @@ def check():
                          capture_output=True).returncode == 0
         if enabled:
             sp.run(['systemctl', '--user', 'start', control.UNIT], check=True)
+    phone_reconnect.check(value, DATA)
     print(json.dumps({'status': value['status'], 'changed': changed}))
 
 

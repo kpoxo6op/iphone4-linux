@@ -17,6 +17,10 @@ It reports:
 - An explicitly configured deadline ending (the ongoing run has none).
 - A stopped or stale phone watcher, or a persistent model/connection problem
   that needs attention. Successful identification stays quiet.
+- Loss of a previously identified Linux USB connection for two minutes.
+  The watcher retains that history across service restarts. Waiting for a
+  cable before the first connection stays quiet; a later disappearance does
+  not imply that the owner unplugged it.
 
 Every message names the problem, the next action and the relevant GitHub issue.
 Normal compilation, queued reviews, routine fixes and waiting for the phone
@@ -45,6 +49,15 @@ phone access. The project still has the integration limitation described in
 the review workflow.
 
 ## Local operation
+
+After an outage, the 30-second phone watcher also tries a read-only reconnect
+probe when the pinned N90 Linux USB device returns. It uses the existing
+strict SSH host keys, saves kernel diagnostics under the private phone
+directory, and checks whether USB and Tailscale reach the same boot. A
+confirmed return produces one Soyclaw report. This does not reset the phone,
+restore a lost RAM boot, bypass host-key checks or deploy a new renderer.
+An electrically attached phone that will not enumerate still needs physical
+recovery; a software timer cannot press its buttons.
 
 ```sh
 python3 harness/notify.py status

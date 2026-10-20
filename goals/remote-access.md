@@ -11,6 +11,14 @@ wrong-key rejection and owner access afterward. The reliability and tailnet
 policy checks below remain open; this is not full milestone acceptance.
 See [the boot record](../docs/first-phone-attempt.md).
 
+**21 October outage:** USB stopped responding while the cable remained
+connected. Remote access is currently unavailable. Recovery and evidence
+collection take priority over UI deployment; see the
+[incident record](../docs/usb-outage-2026-10-21.md). Repeat RAM boot and private
+identity restoration are still open acceptance checks. A frozen screen is
+not evidence that Linux is alive, and missing USB enumeration cannot be
+repaired by an SSH command.
+
 ## Implementation order
 
 1. M1–M3 provide ARMv7 userspace and a reproducible N90 kernel; M4 proves phone

@@ -4,6 +4,7 @@ import hashlib
 from pathlib import Path
 import tempfile
 import unittest
+from datetime import datetime
 from unittest.mock import patch
 
 import control
@@ -131,6 +132,32 @@ class ConnectionBoundary(unittest.TestCase):
         self.assertEqual(notify.phone_events(observation, 181), [])
         observation['status'] = 'identity_unavailable'
         self.assertEqual(notify.phone_events(observation, 900), [])
+
+    def test_lost_linux_connection_alert_survives_watcher_restarts(self):
+        # The real outage was silently treated as a cable that never arrived.
+        # Exercise persisted observations, not a fabricated alert-only flag.
+        (self.root / 'settings.json').write_text('{"workers": []}')
+        live = {'status': 'linux_usb', 'devices': [],
+                'identity': {'HardwareModel': 'N90AP'}}
+        gone = {'status': 'no_device', 'devices': [], 'identity': {}}
+        with patch.object(phone_watch, 'DATA', self.root), \
+                patch.object(phone_watch.control, 'STATE', self.root), \
+                patch.object(phone_watch, 'observe', side_effect=[gone.copy(), live, gone.copy(), gone.copy()]), \
+                patch.object(phone_watch.sp, 'run') as run:
+            run.return_value.returncode = 1  # Do not start any host service.
+            phone_watch.check()
+            initial = json.loads((self.root / 'observation.json').read_text())
+            now = datetime.fromisoformat(initial['checked_at']).timestamp()
+            self.assertEqual(notify.phone_events(initial, now + 121), [])
+            phone_watch.check()
+            phone_watch.check()
+            phone_watch.check()
+        lost = json.loads((self.root / 'observation.json').read_text())
+        now = datetime.fromisoformat(lost['checked_at']).timestamp()
+        self.assertEqual(notify.phone_events(lost, now + 60), [])
+        self.assertEqual([e['key'] for e in notify.phone_events(lost, now + 121)],
+                         ['phone:linux-usb-lost'])
+        self.assertEqual(notify.phone_events(lost, now + 600), [])
 
 
 if __name__ == '__main__':

@@ -16,10 +16,12 @@ can come first; touch and Wi-Fi do not block the initial tailnet path.
 
 ## Current work
 
-**Linux is running on the real phone.** On 20 October 2026, the N90AP booted
-Linux 6.17.0-rc1 and joined Tailscale. SSH works over both USB and the phone's
+**First boot passed; the phone is currently offline.** On 20 October 2026, the N90AP booted
+Linux 6.17.0-rc1 and joined Tailscale. SSH worked over both USB and the phone's
 own tailnet connection. Interactive terminals, file read/write and rejection
 of a wrong SSH key passed on the hardware. A 30-minute tailnet session also passed.
+On 21 October, USB stopped responding with the cable still attached. See the
+[outage record and recovery work](docs/usb-outage-2026-10-21.md).
 
 **[Soy](soy/README.md)** now displays five text scenes on the phone: battery,
 network, a Russian Markdown post, storage and a settings preview. Scenes live
