@@ -112,6 +112,24 @@ def atomic(path, value):
     temp.replace(path)
 
 
+def start_boot(value):
+    """Hand a phone that needs booting or identity restore to phone_boot.py."""
+    if value.get('identity', {}).get('HardwareModel') != 'N90AP':
+        return
+    reconnect = DATA / 'private/reconnect.json'
+    waiting_ssh = (reconnect.exists() and
+                   json.loads(reconnect.read_text()).get('state') == 'waiting_ssh')
+    if not (value['status'] in ('normal', 'recovery', 'dfu', 'openiboot') or
+            (value['status'] == 'linux_usb' and waiting_ssh)):
+        return
+    record = DATA / 'private/boot.json'
+    if record.exists() and json.loads(record.read_text()).get('failures', 0) >= 3:
+        return
+    # The unit holds the USB-operation lock; a running pass ignores this start.
+    sp.run(['systemctl', '--user', 'start', '--no-block', 'iphone4-linux-boot.service'],
+           check=False)
+
+
 def check():
     cfg = json.loads((control.STATE / 'settings.json').read_text())
     targetfile = DATA / 'private/device-policy.json'
@@ -142,6 +160,7 @@ def check():
         if enabled:
             sp.run(['systemctl', '--user', 'start', control.UNIT], check=True)
     phone_reconnect.check(value, DATA)
+    start_boot(value)
     print(json.dumps({'status': value['status'], 'changed': changed}))
 
 
@@ -157,6 +176,12 @@ def install():
         '[Unit]\nDescription=Watch for the iPhone every 30 seconds\n'
         '[Timer]\nOnBootSec=15s\nOnUnitInactiveSec=30s\nAccuracySec=1s\n'
         '[Install]\nWantedBy=timers.target\n')
+    (units / 'iphone4-linux-boot.service').write_text(
+        '[Unit]\nDescription=Boot the iPhone and restore its saved identity\n'
+        '[Service]\nType=oneshot\n'
+        f'WorkingDirectory={control.ROOT}\n'
+        f'ExecStart=/usr/bin/python3 {Path(__file__).resolve().parent / "phone_boot.py"} run\n'
+        'TimeoutStartSec=45min\nMemoryMax=3G\nUMask=0077\n')
     sp.run(['systemctl', '--user', 'daemon-reload'], check=True)
     sp.run(['systemctl', '--user', 'enable', '--now', 'iphone4-linux-phone.timer'], check=True)
 
