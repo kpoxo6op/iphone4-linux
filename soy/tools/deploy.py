@@ -23,31 +23,41 @@ p = argparse.ArgumentParser()
 p.add_argument('--ssh-config', type=Path, required=True)
 p.add_argument('--host', default='iphone4')
 p.add_argument('--binary', type=Path, required=True)
-p.add_argument('--scene', default='reader')
+p.add_argument('--scenes', type=Path, help='scene bundle (default: soy/scenes)')
+p.add_argument('--scenes-revision', help='scene library commit, for the manifest')
+p.add_argument('--scene', help='scene to open (default: reader, else the first)')
 p.add_argument('--receipt', type=Path, required=True)
 a = p.parse_args()
-if not re.fullmatch(r'[A-Za-z0-9_-]+', a.scene):
-    p.error('Invalid scene ID')
 root = Path(__file__).resolve().parents[1]
 repo = root.parent
 revision = sp.check_output(['git', 'rev-parse', 'HEAD'], cwd=repo, text=True).strip()
 dirty = bool(sp.check_output(['git', 'status', '--porcelain', '--', 'soy'], cwd=repo))
 payload = {'soy': a.binary.read_bytes()}
-for folder in ('assets', 'scenes'):
-    for path in sorted((root / folder).rglob('*')):
+for folder, base in (('assets', root / 'assets'), ('scenes', a.scenes or root / 'scenes')):
+    for path in sorted(base.rglob('*')):
+        if any(part.startswith('.') for part in path.relative_to(base).parts):
+            continue
         if path.is_symlink():
             raise SystemExit('Symlinks are not scene bundle inputs')
         if path.is_file():
-            name = path.relative_to(root).as_posix()
+            name = f'{folder}/{path.relative_to(base).as_posix()}'
             if not re.fullmatch(r'[A-Za-z0-9_./-]+', name):
                 raise SystemExit('Unsupported bundle filename')
             payload[name] = path.read_bytes()
+if a.scene is None:
+    ids = [line.strip() for line in payload.get('scenes/index', b'').decode().splitlines()
+           if line.strip() and not line.startswith('#')]
+    a.scene = 'reader' if 'reader' in ids or not ids else ids[0]
+if not re.fullmatch(r'[A-Za-z0-9_-]+', a.scene):
+    p.error('Invalid scene ID')
 manifest = {
     'git_revision': revision,
     'uncommitted_soy': dirty,
     'binary_sha256': sha(payload['soy']),
     'files': {name: sha(data) for name, data in payload.items() if name != 'soy'},
 }
+if a.scenes_revision:
+    manifest['scenes_revision'] = a.scenes_revision
 payload['manifest.json'] = (json.dumps(manifest, indent=2) + '\n').encode()
 release = ('prototype-' if dirty else revision[:12] + '-') + sha(payload['manifest.json'])[:12]
 payload['SHA256SUMS'] = ''.join(
@@ -110,8 +120,10 @@ if previous and not re.fullmatch(r'releases/[A-Za-z0-9-]+', previous):
     raise SystemExit('Unexpected prior release path')
 previous_scene = 'reader'
 if previous:
-    prior_status = json.loads(remote('cat /run/soy/status.json'))
-    previous_scene = prior_status['scene']
+    try:
+        previous_scene = json.loads(remote('cat /run/soy/status.json'))['scene']
+    except (RuntimeError, ValueError, KeyError):
+        pass  # No renderer ran from that release; reader is the fallback.
     if not re.fullmatch(r'[A-Za-z0-9_-]+', previous_scene):
         raise SystemExit('Unexpected previous scene ID')
 record = {'release': release, 'manifest': manifest, 'state': 'staging'}

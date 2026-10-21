@@ -48,6 +48,10 @@ static char net_name[32] = "No link", wifi_state[64] = "Not connected";
 static long mem_total, mem_available;
 static unsigned long long disk_total, disk_available;
 static int ram_root;
+/* Publishers confirm a reload through status.json: loads and failures count
+ * every attempt, and bundle_error explains the latest failed one. */
+static unsigned bundle_loads, bundle_failures;
+static char bundle_error[160];
 
 static inline double now(void) {
   struct timespec t;
@@ -358,27 +362,46 @@ static inline void expand(const char *src, char *out, size_t cap) {
   }
   out[n] = 0;
 }
+/* Scene text quoted in an error: printable ASCII without JSON specials. */
+static inline const char *quoted(const char *s, char *out, size_t n) {
+  size_t i = 0;
+  for (; *s && i + 1 < n && i < 40; s++)
+    out[i++] = *s >= 32 && *s < 127 && *s != '"' && *s != '\\' ? *s : '?';
+  out[i] = 0;
+  return out;
+}
+#define SCENE_FAIL(...)                                                        \
+  do {                                                                         \
+    snprintf(error, sizeof error, __VA_ARGS__);                                \
+    goto fail;                                                                 \
+  } while (0)
 static inline int load_scenes(void) {
   Scene *fresh = calloc(NS, sizeof(Scene));
-  if (!fresh)
-    return -1;
-  int num = 0;
-  char p[600], row[128], error[128] = "Invalid scene bundle";
-  path(p, sizeof p, scenedir, "index");
-  FILE *f = fopen(p, "r");
-  if (!f) {
-    free(fresh);
+  char p[600], row[128], q[48], q2[48], error[sizeof bundle_error];
+  if (!fresh) {
+    snprintf(bundle_error, sizeof bundle_error, "Out of memory");
+    bundle_failures++;
     return -1;
   }
+  int num = 0, row_number = 0;
+  path(p, sizeof p, scenedir, "index");
+  FILE *f = fopen(p, "r");
+  if (!f)
+    SCENE_FAIL("Bundle has no index file");
   while (fgets(row, sizeof row, f)) {
+    row_number++;
     row[strcspn(row, "\r\n")] = 0;
     if (!*row || *row == '#')
       continue;
-    if (num >= NS || !valid_id(row))
-      goto fail;
+    if (num >= NS)
+      SCENE_FAIL("More than %d scenes in index", NS);
+    if (!valid_id(row))
+      SCENE_FAIL("index line %d: '%s' is not a scene ID (A-Z a-z 0-9 - _, "
+                 "at most 40)",
+                 row_number, quoted(row, q, sizeof q));
     for (int i = 0; i < num; i++)
       if (!strcmp(fresh[i].id, row))
-        goto fail;
+        SCENE_FAIL("index line %d: '%s' is listed twice", row_number, row);
     Scene *s = &fresh[num];
     strcpy(s->id, row);
     snprintf(s->label, sizeof s->label, "%s", s->id);
@@ -389,35 +412,43 @@ static inline int load_scenes(void) {
     path(p, sizeof p, scenedir, name);
     FILE *md = fopen(p, "rb");
     if (!md)
-      goto fail;
+      SCENE_FAIL("%s: %s.md is missing", row, row);
     if (fseek(md, 0, SEEK_END)) {
       fclose(md);
-      goto fail;
+      SCENE_FAIL("%s: cannot read %s.md", row, row);
     }
     long bytes = ftell(md);
     if (bytes <= 0 || bytes > MAX_MD) {
       fclose(md);
-      goto fail;
+      SCENE_FAIL("%s: %s.md is %s (limit %d KiB)", row, row,
+                 bytes <= 0 ? "empty" : "too large", MAX_MD / 1024);
     }
     rewind(md);
     char *raw = calloc(bytes + 1, 1);
     if (!raw) {
       fclose(md);
-      goto fail;
+      SCENE_FAIL("Out of memory");
     }
-    if (fread(raw, 1, bytes, md) != (size_t)bytes || memchr(raw, 0, bytes)) {
+    if (fread(raw, 1, bytes, md) != (size_t)bytes) {
       fclose(md);
       free(raw);
-      goto fail;
+      SCENE_FAIL("%s: cannot read %s.md", row, row);
     }
     fclose(md);
     s->body = raw;
-    if (strncmp(raw, "---\n", 4)) {
-      goto fail;
-    }
+    if (memchr(raw, 0, bytes))
+      SCENE_FAIL("%s: contains a NUL byte; scenes are UTF-8 text", row);
+    if (strncmp(raw, "---\n", 4))
+      SCENE_FAIL(!strncmp(raw, "---\r\n", 5)
+                     ? "%s: uses CRLF line endings; use LF"
+                     : "%s: must start with a '---' frontmatter line",
+                 row);
     char *end = strstr(raw + 4, "\n---\n");
     if (!end)
-      goto fail;
+      SCENE_FAIL("%s: frontmatter is not closed by a '---' line", row);
+    int body_line = 4;
+    for (const char *c = raw + 4; c < end; c++)
+      body_line += *c == '\n';
     *end = 0;
     char *save;
     int id_seen = 0;
@@ -425,17 +456,21 @@ static inline int load_scenes(void) {
          ln = strtok_r(NULL, "\n", &save)) {
       char *colon = strchr(ln, ':');
       if (!colon)
-        goto fail;
+        SCENE_FAIL("%s: frontmatter line '%s' is not 'key: value'", row,
+                   quoted(ln, q, sizeof q));
       *colon++ = 0;
       while (*colon == ' ')
         colon++;
       if (!strcmp(ln, "id")) {
         if (strcmp(colon, row))
-          goto fail;
+          SCENE_FAIL("%s: frontmatter id '%s' must match the index and file "
+                     "name",
+                     row, quoted(colon, q, sizeof q));
         id_seen = 1;
       } else if (!strcmp(ln, "label")) {
         if (strlen(colon) >= sizeof s->label)
-          goto fail;
+          SCENE_FAIL("%s: label is longer than %d bytes", row,
+                     (int)sizeof s->label - 1);
         strcpy(s->label, colon);
       } else if (!strcmp(ln, "accent")) {
         if (!strcmp(colon, "amber"))
@@ -445,38 +480,38 @@ static inline int load_scenes(void) {
         else if (!strcmp(colon, "muted"))
           s->accent = MUTED;
         else if (strcmp(colon, "sage"))
-          goto fail;
+          SCENE_FAIL("%s: accent '%s' is not sage, cyan, amber or muted", row,
+                     quoted(colon, q, sizeof q));
       } else if (!strcmp(ln, "hero"))
         s->hero = !strcmp(colon, "true");
       else if (strcmp(ln, "source"))
-        goto fail;
+        SCENE_FAIL("%s: unknown frontmatter key '%s' (id, label, accent, "
+                   "hero, source)",
+                   row, quoted(ln, q2, sizeof q2));
     }
-    if (!id_seen) {
-      goto fail;
-    }
+    if (!id_seen)
+      SCENE_FAIL("%s: frontmatter has no 'id: %s' line", row, row);
     char *body = strdup(end + 5);
     free(raw);
     s->body = body;
     if (!body)
-      goto fail;
+      SCENE_FAIL("Out of memory");
     /* Reject terminal controls. Markdown is inert text. */
-    for (const unsigned char *c = (unsigned char *)body; *c; c++)
-      if (*c < 32 && *c != '\n' && *c != '\t' && *c != '\r')
-        goto fail;
     int lines = 1;
-    for (const char *c = body; *c; c++)
-      if (*c == '\n')
-        lines++;
-    if (lines > 2048) {
-      strcpy(error, "Scene exceeds 2048 lines");
-      goto fail;
+    for (const unsigned char *c = (unsigned char *)body; *c; c++) {
+      if (*c < 32 && *c != '\n' && *c != '\t' && *c != '\r')
+        SCENE_FAIL("%s: line %d contains control character 0x%02x", row,
+                   body_line + lines - 1, *c);
+      lines += *c == '\n';
     }
+    if (lines > 2048)
+      SCENE_FAIL("%s: %d lines (limit 2048)", row, lines);
     num++;
   }
   fclose(f);
   f = NULL;
-  if (num <= 0 || num > NS)
-    goto fail;
+  if (num <= 0)
+    SCENE_FAIL("index lists no scenes");
   char selected[48] = "";
   if (count)
     strcpy(selected, scenes[current].id);
@@ -498,6 +533,8 @@ static inline int load_scenes(void) {
       current = i;
   free(fresh);
   dirty = 1;
+  bundle_loads++;
+  bundle_error[0] = 0;
   return 0;
 fail:
   if (f)
@@ -505,7 +542,10 @@ fail:
   for (int i = 0; i < NS; i++)
     free(fresh[i].body);
   free(fresh);
-  fprintf(stderr, "%s\n", error);
+  fprintf(stderr, "Invalid scene bundle: %s\n", error);
+  snprintf(bundle_error, sizeof bundle_error, "%s", error);
+  bundle_failures++;
   return -1;
 }
+#undef SCENE_FAIL
 #endif

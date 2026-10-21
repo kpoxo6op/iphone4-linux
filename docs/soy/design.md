@@ -17,10 +17,14 @@ scenes that an LLM creates for the person who asks for them. People say what
 they want to see and experience. They do not install, configure or maintain
 anything.
 
-How this will work technically is an open question. The scene bundles and
-runtime below are the current first step, not a decided architecture. Record
-new mechanisms here once they are actually chosen, and don't present an
-unbuilt one as settled.
+How this will work technically is still open. The first working path, built
+on 22 October 2026, is the scene library: AI writes a Markdown scene, and
+`soy/tools/scene.py` checks it, saves it in a private Git library and
+publishes it into the running renderer without a restart. The phone comes back
+with the last published scenes after every reboot. [Writing scenes](scenes.md)
+has the format and the commands. It is a first step, not a decided
+architecture. Record new mechanisms here once they are actually built, and
+don't present an unbuilt one as settled.
 
 ## The feel
 

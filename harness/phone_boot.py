@@ -392,18 +392,36 @@ def boot(run, record):
     return boot_id
 
 
+SCENES = PRIVATE / 'scenes'
+
+
 def deploy_display(run):
-    """RAM boots lose Soy; reinstall the current build. Not a boot failure."""
+    """RAM boots lose Soy; reinstall the current build. Not a boot failure.
+
+    The phone comes back with the published scene library (soy/tools/scene.py)
+    when there is one. If that fails, it gets the default scenes in Git.
+    """
     binary = ROOT / 'output/soy/lvgl-armv7/soy'
     if not binary.exists():
         log(run, 'display_skipped', reason='no ARM Soy build')
         return
+    if (SCENES / '.git').is_dir():
+        result = sp.run([sys.executable, str(ROOT / 'soy/tools/scene.py'),
+                         '--library', str(SCENES), '--ssh-config', str(SSH_CONFIG),
+                         '--host', 'iphone4-usb', '--binary', str(binary),
+                         'sync', '--receipt', str(run / 'soy-deploy.json')],
+                        capture_output=True, timeout=360)
+        if result.returncode == 0:
+            log(run, 'display_deployed', scenes='library')
+            return
+        log(run, 'scene_library_failed', returncode=result.returncode,
+            detail=result.stderr.decode()[-300:])
     result = sp.run([sys.executable, str(ROOT / 'soy/tools/deploy.py'),
                      '--ssh-config', str(SSH_CONFIG), '--host', 'iphone4-usb',
                      '--binary', str(binary), '--receipt', str(run / 'soy-deploy.json')],
                     capture_output=True, timeout=300)
     log(run, 'display_deployed' if result.returncode == 0 else 'display_failed',
-        returncode=result.returncode)
+        returncode=result.returncode, scenes='default')
 
 
 def deploy_watchdog(run):
