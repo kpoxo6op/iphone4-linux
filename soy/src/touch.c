@@ -54,7 +54,7 @@ static lv_obj_t *page_images[NS];
 static lv_obj_t *page_headers[NS];
 static int page_dirty[NS];
 static size_t cache_bytes;
-#define CACHE_LIMIT (128u * 1024 * 1024)
+#define CACHE_LIMIT (160u * 1024 * 1024)
 static lv_obj_t *pinch_preview, *pinch_layer;
 static lv_draw_buf_t *pinch_image;
 static int pinch_level;
@@ -629,7 +629,38 @@ static void create_body(int i) {
   lv_obj_set_style_bg_opa(v->body, LV_OPA_COVER, LV_PART_SCROLLBAR);
   lv_obj_add_event_cb(v->body, body_event, LV_EVENT_ALL, (void *)(intptr_t)i);
 }
+/* The sheet backdrop, the card snapshot (sized for the tallest sheet) and
+ * the pinch preview are allocated and touched once, before scene layouts
+ * claim the cache budget. A fresh 2.4 MB allocation page-faults on a
+ * gesture's first frame, and with a full budget a sheet redrew its live
+ * controls every frame and a pinch showed no preview at all. */
+static lv_draw_buf_t *backdrop, *card, *pinch_buf;
+static void reserve_gesture_buffers(void) {
+  size_t viewport = (size_t)W * (BOTTOM - TOP) * 4;
+  if (!pinch_buf && cache_bytes + viewport <= CACHE_LIMIT) {
+    pinch_buf = lv_draw_buf_create(W, BOTTOM - TOP, LV_COLOR_FORMAT_XRGB8888, W * 4);
+    if (pinch_buf) {
+      memset(pinch_buf->data, 0, viewport);
+      cache_bytes += pinch_buf->data_size;
+    }
+  }
+  if (!backdrop && cache_bytes + PIXEL_BYTES < CACHE_LIMIT) {
+    backdrop = lv_draw_buf_create(W, H, LV_COLOR_FORMAT_XRGB8888, W * 4);
+    if (backdrop) {
+      memset(backdrop->data, 0, PIXEL_BYTES);
+      cache_bytes += backdrop->data_size;
+    }
+  }
+  if (!card && cache_bytes + (size_t)W * 800 * 4 < CACHE_LIMIT) {
+    card = lv_draw_buf_create(W, 800, LV_COLOR_FORMAT_XRGB8888, W * 4);
+    if (card) {
+      memset(card->data, 0, (size_t)W * 800 * 4);
+      cache_bytes += card->data_size;
+    }
+  }
+}
 static void build_pages(void) {
+  reserve_gesture_buffers();
   end_preview(0);
   if (sheet)
     close_sheet();
@@ -676,9 +707,12 @@ static void build_pages(void) {
      * entire document on the input thread. Oversized/live documents retain the
      * bounded fallback and remain subject to the same failing performance gate.
      */
+    /* Leave room for every page's swipe snapshot (prepare_page). */
     if (!v->live_count && !strstr(scenes[i].body, "{{") && v->nblocks <= 128 &&
         strlen(scenes[i].body) <= 16384 &&
-        (size_t)v->height * W * 4 * 6 + cache_bytes < CACHE_LIMIT) {
+        (size_t)v->height * W * 4 * 6 + cache_bytes +
+                (size_t)count * W * 884 * 4 <
+            CACHE_LIMIT) {
       View initial = *v;
       for (int z = 0; z < 5; z++) {
         if (z == initial.zoom)
@@ -839,16 +873,6 @@ static void open_sheet(int kind, int from_edge) {
   close_pending = 0;
   /* A modal freezes its underlay. An opaque object also lets LVGL cull the
    * covered page tree; a transparent image alone does not establish cover. */
-  /* The backdrop buffer is allocated and touched once: a fresh 2.4 MB
-   * allocation page-faults on the first frame of every sheet gesture. */
-  static lv_draw_buf_t *backdrop;
-  if (!backdrop && cache_bytes + PIXEL_BYTES < CACHE_LIMIT) {
-    backdrop = lv_draw_buf_create(W, H, LV_COLOR_FORMAT_XRGB8888, W * 4);
-    if (backdrop) {
-      memset(backdrop->data, 0, PIXEL_BYTES);
-      cache_bytes += backdrop->data_size;
-    }
-  }
   if (backdrop) {
     lv_draw_buf_t *buf = backdrop;
     {
@@ -940,16 +964,6 @@ static void open_sheet(int kind, int from_edge) {
   lv_obj_set_size(handle, 64, 4);
   lv_obj_set_clickable(handle, false);
   lv_obj_update_layout(sheet_card);
-  /* One card buffer sized for the tallest sheet, allocated and touched once,
-   * so opening a sheet does not page-fault a fresh snapshot allocation. */
-  static lv_draw_buf_t *card;
-  if (!card && cache_bytes + (size_t)W * 800 * 4 < CACHE_LIMIT) {
-    card = lv_draw_buf_create(W, 800, LV_COLOR_FORMAT_XRGB8888, W * 4);
-    if (card) {
-      memset(card->data, 0, (size_t)W * 800 * 4);
-      cache_bytes += card->data_size;
-    }
-  }
   if (card && lv_snapshot_reshape_draw_buf(sheet_card, card) == LV_RESULT_OK &&
       lv_snapshot_take_to_draw_buf(sheet_card, LV_COLOR_FORMAT_XRGB8888, card) ==
           LV_RESULT_OK) {
@@ -1016,9 +1030,7 @@ static void end_preview(int commit) {
   }
   if (pinch_image) {
     soy_pinch_draw_source(NULL);
-    cache_bytes -= pinch_image->data_size;
-    lv_draw_buf_destroy(pinch_image);
-    pinch_image = NULL;
+    pinch_image = NULL; /* The reserved buffer stays for the next pinch. */
   }
   preview_scale = 1;
 }
@@ -1187,8 +1199,7 @@ static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
       pinch_level = pinch_base;
       pinch_index = current;
       cancel_motion();
-      if (!sheet &&
-          cache_bytes + (size_t)W * (BOTTOM - TOP) * 4 <= CACHE_LIMIT) {
+      if (!sheet && pinch_buf) {
         Frame *last = frames ? &trace[(frames - 1) % TRACE_FRAMES] : NULL;
         /* The settled viewport is already laid out and rendered. Copy those
          * exact pixels when they match the current view; interruption during
@@ -1197,21 +1208,17 @@ static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
             last->page == current * W &&
             last->scroll == lv_obj_get_scroll_y(views[current].body) &&
             !last->panel && last->scale == 1) {
-          pinch_image = lv_draw_buf_create(W, BOTTOM - TOP,
-                                           LV_COLOR_FORMAT_XRGB8888, W * 4);
-          if (pinch_image)
-            memcpy(pinch_image->data, pixels + TOP * W,
-                   (size_t)W * (BOTTOM - TOP) * 4);
-        } else {
-          pinch_image =
-              lv_snapshot_take(views[current].body, LV_COLOR_FORMAT_XRGB8888);
-        }
-        if (pinch_image && cache_bytes + pinch_image->data_size > CACHE_LIMIT) {
-          lv_draw_buf_destroy(pinch_image);
-          pinch_image = NULL;
+          memcpy(pinch_buf->data, pixels + TOP * W,
+                 (size_t)W * (BOTTOM - TOP) * 4);
+          pinch_image = pinch_buf;
+        } else if (lv_snapshot_reshape_draw_buf(views[current].body, pinch_buf) ==
+                       LV_RESULT_OK &&
+                   lv_snapshot_take_to_draw_buf(views[current].body,
+                                                LV_COLOR_FORMAT_XRGB8888,
+                                                pinch_buf) == LV_RESULT_OK) {
+          pinch_image = pinch_buf;
         }
         if (pinch_image) {
-          cache_bytes += pinch_image->data_size;
           soy_pinch_draw_source(NULL);
           pinch_layer = lv_obj_create(views[current].page);
           flat(pinch_layer);

@@ -387,6 +387,7 @@ def boot(run, record):
         raise StageFailed(f'No automatic route from mode {mode}')
     boot_id = restore_identity(run)
     deploy_watchdog(run)
+    tune_scheduler(run)
     deploy_display(run)
     deploy_touch(run)
     deploy_battery(run)
@@ -465,6 +466,22 @@ def deploy_battery(run):
         'iphone4-usb', 'nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 '
         '</dev/null & sleep 2; cat /run/power_supply/battery/status').returncode == 0
     log(run, 'battery_started' if started else 'battery_failed')
+
+
+def tune_scheduler(run):
+    """Let starved normal tasks run in 0.5 ms slices, not one 50 ms block.
+
+    Since Linux 6.12 a deadline "fair server" gives normal tasks 50 ms per
+    second while real-time tasks hog the CPU. Soy renders at SCHED_FIFO, so
+    any busy normal task (tailscaled, keep, the battery reader) froze it for
+    50 ms once a second. 0.5 ms every 50 ms still keeps SSH alive during long
+    gestures. Not a boot failure.
+    """
+    result = ssh('iphone4-usb', 'mount -t debugfs none /sys/kernel/debug 2>/dev/null; '
+                 'F=/sys/kernel/debug/sched/fair_server/cpu0; '
+                 'echo 500000 > $F/runtime && echo 50000000 > $F/period')
+    log(run, 'scheduler_tuned' if result.returncode == 0 else 'scheduler_untuned',
+        detail=result.stderr.decode()[-200:])
 
 
 def deploy_keep(run):

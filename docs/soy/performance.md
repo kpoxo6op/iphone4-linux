@@ -109,6 +109,47 @@ there is little headroom. Next: prepare sheets at rest, avoid the full-view
 rebuild at the end of a gesture, and move the touch driver into the kernel
 with the ATN interrupt instead of polling.
 
+## Morning of 22 October 2026: fair server, cache budget, snap pacing
+
+Three things moved the frame results, measured with `check_frames.py --host
+iphone4-usb` on the lean kernel with keep (`kernel/n90-keep`) and the battery
+reader running, as on every boot now:
+
+1. **The kernel's fair server.** Since Linux 6.12 a deadline server gives
+   normal tasks 50 ms per second whenever real-time tasks keep the CPU busy.
+   Soy renders at `SCHED_FIFO`, so as soon as keep or tailscaled had work
+   during a gesture, Soy stopped for 50 ms once a second: reading went from
+   0 to 6–10 misses with a 61 ms worst frame. With keep and the battery reader
+   stopped, 0 misses. `harness/phone_boot.py` now gives the fair server 0.5 ms
+   every 50 ms instead. keep also no longer runs `pidof`, which read every
+   process's command line under its mmap lock.
+2. **The cache budget.** A sixth, text-heavy scene filled the 128 MiB budget,
+   so the bottom sheet found no room for its card snapshot and redrew live
+   controls every frame (163 misses), and a pinch found no room for its
+   preview. Soy now reserves the sheet backdrop, the sheet card and the pinch
+   preview before preparing scene layouts, leaves room for every page's swipe
+   snapshot when it decides which layouts to prepare, and has 160 MiB
+   (about 200 MB of RAM stays available).
+3. **Snap pacing.** Snaps last 0.3 ms per pixel between 48 and 180 ms and land
+   once within 1.5 px, so the last pixel of a page snap no longer arrives late.
+
+| Surface | Average fps | p95 | p99 | Worst | Misses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reading | 108.3 | 10.6 ms | 11.8 ms | 15.3 ms | 0 / 1121 |
+| Pages | 86.8 | 13.0 ms | 14.1 ms | 15.5 ms | 0 / 897 |
+| Pinch in | 85.1 | 13.5 ms | 14.4 ms | 22.0 ms | 2 / 886 |
+| Pinch out | 96.7 | 12.9 ms | 13.8 ms | 16.1 ms | 0 / 1002 |
+| Top sheet | 120.7 | 8.7 ms | 9.9 ms | 33.2 ms | 2 / 1244 |
+| Bottom sheet | 104.3 | 11.2 ms | 11.9 ms | 27.5 ms | 2 / 1072 |
+
+**Three surfaces still miss the gate.** The sheet misses are the frame after
+the sheet reaches its closed end while the finger stays down (the next three
+moves of the finger produce no motion, which looks like LVGL's 10 px drag
+threshold applying again) and the frame that removes the closed sheet after
+release (a 17 ms full redraw). Pinch misses are the release frame (the release
+arrives 8 ms after the last move, then the new layout draws in 12 ms) and
+occasional preview frames at 14–15 ms.
+
 ## Latest phone measurement — still fails
 
 21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary
