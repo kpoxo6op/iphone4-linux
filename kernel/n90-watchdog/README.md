@@ -14,9 +14,16 @@ and kicked it every 8 s for 32 s, then stopped: the phone reset into DFU and
 the boot watcher brought Linux back.
 
 `n90-wdt` arms it (60 s by default) and restarts the count every 10 s at
-SCHED_FIFO 50. A frozen kernel stops the kicks and the SoC resets. SIGTERM
-disarms it first, so a normal `reboot` is unaffected. `harness/phone_boot.py`
-starts it on every boot.
+SCHED_FIFO 50. A frozen kernel stops the kicks and the SoC resets.
+`harness/phone_boot.py` starts it on every boot, and keep (`kernel/n90-keep`)
+restarts it if it dies.
+
+SIGTERM leaves a final 30 s count rather than disarming. A normal `reboot`
+resets the SoC well before that, and a deploy's new kicker re-arms the full
+timeout. On 22 October a reboot after a crashed Wi-Fi probe hung in
+`device_shutdown()` on a lock the crashed probe still held; the old kicker
+had disarmed on SIGTERM, so the phone sat half rebooted until a hard reset.
+Send SIGUSR1 to disarm on purpose.
 
 A reset does not release the phone's DHCP lease, and the gadget picks a new
 MAC each boot, so NetworkManager offered the next boot nothing until the old
