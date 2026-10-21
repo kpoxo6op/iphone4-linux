@@ -362,6 +362,7 @@ def main():
                           last_result='failed', last_error=str(exc)[:300])
             save_record(record)
             raise SystemExit(1)
+        record.pop('last_error', None)
         record.update(failures=0, last_run=run.name, last_result='ready', boot_id=boot_id,
                       ready_at=datetime.now(timezone.utc).isoformat())
         save_record(record)
