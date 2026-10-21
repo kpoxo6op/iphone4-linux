@@ -54,6 +54,8 @@ UPLOADS = [('zImage', '0x01000000'), ('n90-boot.dtb', '0x0c000000'),
            ('ramboot.bin', '0x0c100000'), ('initramfs', '0x0d000000')]
 ENTRY = '0x0c100000'
 MAX_FAILURES = 3
+# Test boots only: replace a knownboot upload with another file for one pass.
+OVERRIDES = {}
 
 
 class StageFailed(Exception):
@@ -170,7 +172,15 @@ def dfu_to_openiboot(run):
 
 
 def openiboot_to_linux(run):
-    commands = ''.join(f'!{KIT / name}@{address}\n' for name, address in UPLOADS)
+    paths = {}
+    for name, _ in UPLOADS:
+        paths[name] = KIT / name
+        if name in OVERRIDES:
+            data = Path(OVERRIDES[name]).read_bytes()
+            paths[name] = run / ('test-' + name)
+            paths[name].write_bytes(data)
+            log(run, 'test_override', file=name, sha256=hashlib.sha256(data).hexdigest())
+    commands = ''.join(f'!{paths[name]}@{address}\n' for name, address in UPLOADS)
     commands += f'go {ENTRY}\n'
     # oibc exits at once if openiBoot is not accepting connections yet; after
     # a successful `go` it never exits, and Linux USB enumeration is the result.
@@ -334,7 +344,13 @@ def deploy_display(run):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('command', choices=('run', 'status', 'reset-failures'))
+    parser.add_argument('--test-zimage', help='boot this kernel instead, once')
+    parser.add_argument('--test-dtb', help='boot this device tree instead, once')
     args = parser.parse_args()
+    if args.test_zimage:
+        OVERRIDES['zImage'] = args.test_zimage
+    if args.test_dtb:
+        OVERRIDES['n90-boot.dtb'] = args.test_dtb
     os.umask(0o077)
     if args.command == 'status':
         print(RECORD.read_text() if RECORD.exists() else '{}')

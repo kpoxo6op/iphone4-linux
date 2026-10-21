@@ -1,0 +1,227 @@
+/dts-v1/;
+
+/ {
+	#address-cells = <0x01>;
+	#size-cells = <0x01>;
+	model = "Apple iPhone 4";
+	compatible = "apple,n90", "samsung,s5l8930";
+	chassis-type = "handset";
+
+	cpus {
+		#address-cells = <0x01>;
+		#size-cells = <0x00>;
+
+		cpu@0 {
+			device_type = "cpu";
+			compatible = "arm,cortex-a8";
+			reg = <0x00>;
+		};
+	};
+
+	soc {
+		compatible = "simple-bus";
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+		ranges;
+
+		serial@82500000 {
+			compatible = "apple,s5l-uart";
+			reg = <0x82500000 0x1000>;
+			reg-io-width = <0x04>;
+			id = <0x00>;
+			interrupt-parent = <0x01>;
+			interrupts = <0x16>;
+			clocks = <0x02>;
+			clock-names = "uart";
+		};
+
+		interrupt-controller@BF200000 {
+			compatible = "arm,pl192-vic";
+			interrupt-controller;
+			reg = <0xbf200000 0x1000>;
+			#interrupt-cells = <0x01>;
+			phandle = <0x01>;
+		};
+
+		interrupt-controller@BF210000 {
+			compatible = "arm,pl192-vic";
+			interrupt-controller;
+			reg = <0xbf210000 0x1000>;
+			#interrupt-cells = <0x01>;
+		};
+
+		interrupt-controller@BF220000 {
+			compatible = "arm,pl192-vic";
+			interrupt-controller;
+			reg = <0xbf220000 0x1000>;
+			#interrupt-cells = <0x01>;
+		};
+
+		interrupt-controller@BF230000 {
+			compatible = "arm,pl192-vic";
+			interrupt-controller;
+			reg = <0xbf230000 0x1000>;
+			#interrupt-cells = <0x01>;
+		};
+
+		gpio@bfa00000 {
+			compatible = "apple,s5l8930-gpio", "apple,pinctrl";
+			reg = <0xbfa00000 0x1000>;
+			gpio-controller;
+			#gpio-cells = <0x02>;
+			apple,npins = <176>;
+			phandle = <0x10>;
+
+			button-pins {
+				pinmux = <0x0 0x1 0x2 0x3 0x4>;
+				phandle = <0x11>;
+			};
+
+			i2c-gpio-pins {
+				pinmux = <75 76>;
+				phandle = <0x12>;
+			};
+		};
+
+		timer@BF102000 {
+			compatible = "apple,s5l8930-timer";
+			reg = <0xbf102000 0x4000>;
+			clocks = <0x02>;
+			interrupt-parent = <0x01>;
+			interrupts = <0x06>;
+		};
+	};
+
+	clocks {
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+		ranges;
+
+		osc24M {
+			#clock-cells = <0x00>;
+			compatible = "fixed-clock";
+			clock-frequency = <0x16e3600>;
+			phandle = <0x02>;
+		};
+	};
+
+	usbphy@86000000 {
+		compatible = "apple,s5l8702-otgphy";
+		reg = <0x86000000 0x1000>;
+		status = "okay";
+		#phy-cells = <0x00>;
+		phandle = <0x03>;
+	};
+
+	usb@86100000 {
+		compatible = "apple,s5l87xx-usb";
+		reg = <0x86100000 0x40000>;
+		interrupt-parent = <0x01>;
+		interrupts = <0x0d>;
+		phys = <0x03>;
+		phy-names = "usb2-phy";
+		clocks = <0x02>;
+		clock-names = "otg";
+		g-rx-fifo-size = <0x11b>;
+		g-np-tx-fifo-size = <0x100>;
+		g-tx-fifo-size = <0x40 0x40 0x40 0x80 0x80 0x80 0x100 0x100 0x180>;
+		status = "okay";
+		dr_mode = "peripheral";
+	};
+
+	gpio-keys-polled {
+		compatible = "gpio-keys-polled";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x11>;
+		poll-interval = <50>;
+
+		button-power {
+			label = "Power";
+			gpios = <0x10 1 1>;
+			linux,code = <116>;
+		};
+
+		button-home {
+			label = "Home";
+			gpios = <0x10 0 1>;
+			linux,code = <102>;
+		};
+
+		button-volume-up {
+			label = "Volume Up";
+			gpios = <0x10 2 1>;
+			linux,code = <115>;
+		};
+
+		button-volume-down {
+			label = "Volume Down";
+			gpios = <0x10 3 1>;
+			linux,code = <114>;
+		};
+
+		switch-ringer {
+			label = "Ringer";
+			gpios = <0x10 4 1>;
+			linux,input-type = <5>;
+			linux,code = <0x0e>;
+		};
+	};
+
+	i2c-gpio {
+		compatible = "i2c-gpio";
+		pinctrl-names = "default";
+		pinctrl-0 = <0x12>;
+		sda-gpios = <0x10 75 0>;
+		scl-gpios = <0x10 76 0>;
+		i2c-gpio,delay-us = <5>;
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		backlight@74 {
+			compatible = "apple,s5l8930-pmu-backlight";
+			reg = <0x74>;
+			default-brightness-level = <1696>;
+		};
+	};
+
+	chosen {
+		bootargs = "console=tty0 rdinit=/init panic=10";
+		linux,initrd-start = <0xd000000>;
+		linux,initrd-end = <0xf36e9a0>;
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+		ranges;
+
+		framebuffer@f700000 {
+			compatible = "simple-framebuffer";
+			reg = <0xf700000 0x258000>;
+			width = <0x280>;
+			height = <0x3c0>;
+			stride = <0xa00>;
+			format = "x8r8g8b8";
+		};
+	};
+
+	memory@0 {
+		device_type = "memory";
+		reg = <0x00 0x20000000>;
+	};
+
+	reserved-memory {
+		#address-cells = <0x01>;
+		#size-cells = <0x01>;
+		ranges;
+
+		fbmem@f700000 {
+			reg = <0xf700000 0x258000>;
+			no-map;
+		};
+
+		ramoops@ffe0000 {
+			compatible = "ramoops";
+			reg = <0xffe0000 0x20000>;
+			record-size = <0x4000>;
+			console-size = <0x4000>;
+		};
+	};
+};
