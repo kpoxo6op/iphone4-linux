@@ -12,8 +12,15 @@
  * 15 vbus. The scale of each channel is not known yet: `probe` prints raw
  * values so they can be matched against a meter or the gas gauge.
  *
+ * The USB input current limit is register 0x2b: bits 0-4 a code, bit 7 set
+ * when software chose it. AppleD1815PMUPowerSource writes code | 0x80 and
+ * maps codes to milliamps as in limit_ma() (iOS 7.1.2 kernelcache,
+ * 0x8098bc80 and 0x8098ddfe). Code 5, 100 mA, is the unconfigured USB value.
+ *
  * Usage: n90-battery <cmd>
- *   probe            print the supply register and every ADC channel
+ *   probe            print the supply registers and every ADC channel
+ *   usb-limit <mA>   raise or lower the USB input current limit, backing
+ *                    off if VBUS sags by more than a tenth
  *   serve [dir]      publish readings every 10 s as power_supply-style
  *                    files under dir (default /run/power_supply)
  *
@@ -39,6 +46,7 @@
 #define PMU_ADDR        0x74
 #define PMU_EVENT       0x02
 #define PMU_SUPPLY      0x07
+#define PMU_USB_LIMIT   0x2b
 #define PMU_ADC_MUX     0x30
 #define PMU_ADC_LOW     0x31
 #define PMU_SUPPLY_USB  0x08
@@ -47,6 +55,7 @@
 #define ADC_START       0x10
 #define ADC_VBAT        4
 #define ADC_ICH         1
+#define ADC_VBUS        15
 
 static int i2c = -1;
 
@@ -116,14 +125,62 @@ static int adc(int channel)
 	return (v[1] << 4) | (v[0] & 0xf);
 }
 
+/* AppleD1815PMUPowerSource's code-to-milliamp table for register 0x2b. */
+static int limit_ma(int code)
+{
+	if (code <= 15)
+		return 50 + 10 * code;
+	if (code <= 23)
+		return 50 * code - 550;
+	if (code <= 25)
+		return 200 * code - 4100;
+	return code <= 31 ? 200 * code - 4200 : -1;
+}
+
+static int limit_code(int ma)
+{
+	int code, best = 0;
+
+	for (code = 0; code <= 31; code++)
+		if (limit_ma(code) <= ma)
+			best = code;
+	return best;
+}
+
+static int usb_limit(int ma)
+{
+	int before = pmu_read(PMU_USB_LIMIT), vbus = adc(ADC_VBUS), after, sag;
+
+	if (before < 0 || vbus <= 0) {
+		fprintf(stderr, "cannot read the limit or VBUS\n");
+		return 1;
+	}
+	if (!(pmu_read(PMU_SUPPLY) & PMU_SUPPLY_USB)) {
+		fprintf(stderr, "no USB power\n");
+		return 1;
+	}
+	pmu_write(PMU_USB_LIMIT, limit_code(ma) | 0x80);
+	sleep(1);
+	after = adc(ADC_VBUS);
+	sag = after > 0 && after * 10 < vbus * 9;
+	if (sag)
+		pmu_write(PMU_USB_LIMIT, before);
+	printf("usb limit 0x%02x (%d mA) -> 0x%02x (%d mA), vbus %d -> %d counts%s\n",
+	       before, limit_ma(before & 0x1f), pmu_read(PMU_USB_LIMIT),
+	       limit_ma(pmu_read(PMU_USB_LIMIT) & 0x1f), vbus, after,
+	       sag ? ", sagged: restored" : "");
+	return sag;
+}
+
 static void probe(void)
 {
-	int supply = pmu_read(PMU_SUPPLY), c, n;
+	int supply = pmu_read(PMU_SUPPLY), c, n, limit = pmu_read(PMU_USB_LIMIT);
 
 	printf("supply 0x07 = 0x%02x (%s)\n", supply,
 	       supply < 0 ? "read failed" :
 	       supply & PMU_SUPPLY_USB ? "USB" :
 	       supply & PMU_SUPPLY_FW ? "FireWire" : "battery");
+	printf("usb limit 0x2b = 0x%02x (%d mA)\n", limit, limit_ma(limit & 0x1f));
 	printf("gpmem 0x80-0x8f:");
 	for (c = 0x80; c <= 0x8f; c++)
 		printf(" %02x", pmu_read(c) & 0xff);
@@ -213,7 +270,7 @@ static void serve(const char *root)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: n90-battery probe | serve [dir]\n");
+		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | serve [dir]\n");
 		return 2;
 	}
 	i2c = open("/dev/i2c-0", O_RDWR);
@@ -223,6 +280,8 @@ int main(int argc, char **argv)
 	}
 	if (!strcmp(argv[1], "probe"))
 		probe();
+	else if (!strcmp(argv[1], "usb-limit") && argc > 2)
+		return usb_limit(atoi(argv[2]));
 	else if (!strcmp(argv[1], "serve"))
 		serve(argc > 2 ? argv[2] : "/run/power_supply");
 	else
