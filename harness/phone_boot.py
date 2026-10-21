@@ -466,7 +466,13 @@ def main():
         save_record(record)
         return
     if record.get('failures', 0) >= MAX_FAILURES:
-        raise SystemExit('Three consecutive boot failures; inspect boot-runs, then reset-failures')
+        # A phone in DFU has just been reset (by hand, watchdog or panic), so
+        # earlier failures no longer describe its state: start over.
+        if args.command == 'run' and observe() == 'dfu':
+            record.update(failures=0, backlight_failures=0)
+            save_record(record)
+        else:
+            raise SystemExit('Three consecutive boot failures; inspect boot-runs, then reset-failures')
     with open(LOCK, 'w') as lock:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
