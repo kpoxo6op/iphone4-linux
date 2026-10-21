@@ -1,8 +1,9 @@
 # Soy
 
 Text scenes for the iPhone 4. Large type, a dark screen, live readings and
-Markdown. AI edits an ordered scene bundle in Git and sends it over SSH;
-the phone displays it independently.
+Markdown. AI writes a scene and `tools/scene.py` publishes it to the running
+phone; the phone displays it independently. [Writing scenes](../docs/soy/scenes.md)
+has the format and the commands.
 
 Read the [design foundations](../docs/soy/foundations.md), [current design](../docs/soy/design.md)
 and [Ghostty performance work](../docs/soy/performance.md) before changing it.
@@ -16,11 +17,13 @@ Storage distinguishes the RAM filesystem from phone flash. Settings are read-onl
 
 The touch frontend uses pinned LVGL 9.6.0 for scrolling, snapping, gestures and
 layout, with pinned Pixman 0.46.4 for basic composition and pinch scaling.
-It currently **fails the 60 fps release requirement**; see the measured results
-in [performance.md](../docs/soy/performance.md). [The research and interaction map](../docs/soy/touch-research.md)
-explain the choice. Tests use an explicitly virtual Linux uinput touchscreen on
-the phone. The physical digitizer still has no driver, so finger input is not accepted. The application and its data currently
-live in the RAM boot; they do not survive a reboot automatically.
+It currently **fails the 60 fps release requirement** by one or two frames on
+five of six surfaces; see the measured results in [performance.md](../docs/soy/performance.md).
+[The research and interaction map](../docs/soy/touch-research.md) explain the
+choice. Physical touch arrives from the N1 controller through
+`kernel/n90-touch`; acceptance tests replay virtual contacts through uinput.
+The phone runs from RAM. After every reboot the boot harness reinstalls Soy
+with the last published scenes.
 
 ![Five scenes captured from the phone's active display buffer](../docs/soy/touch-scenes.png)
 
@@ -80,9 +83,9 @@ reading position. The first waking contact is consumed until every finger
 lifts. Remote navigation also wakes the display. SSH and Tailscale are separate
 processes and the system is never suspended.
 
-This is currently **black pixels, not backlight power-off**. The boot framebuffer
-has no backlight driver, and physical touch is still unavailable. Remote wake
-is the available operator path. [Evidence and remaining hardware work](../docs/soy/idle-display.md).
+Blanking draws black pixels, then turns the PMU backlight off when the kernel
+has the `pmu-backlight` device (`kernel/n90-display-power`). A touch or remote
+navigation wakes it. [Evidence and remaining hardware work](../docs/soy/idle-display.md).
 
 The private `/run/soy/control` FIFO accepts `sleep`, `wake`, and `idle SECONDS`
 (0 disables automatic blanking, maximum 86400). For example, over the existing
@@ -95,8 +98,8 @@ printf 'idle 120\n' > /run/soy/control
 
 Set `--idle-seconds 120` at process startup to change the default. FIFO changes
 last until that process exits. `/run/soy/status.json` reports `display_state`
-(`awake` or `blanked`), `idle_timeout_s`, `inactive_ms`, and
-`backlight_power_control: false`. The old fallback renderer is unchanged.
+(`awake` or `blanked`), `idle_timeout_s`, `inactive_ms`, and `backlight`
+(`on`, `off` or `unavailable`). The old fallback renderer is unchanged.
 
 ```sh
 python3 soy/tools/check_idle.py --binary output/soy/lvgl-native-asan/soy \
@@ -111,7 +114,9 @@ integrating it into a visible terminal scene is the next step.
 
 ## Scene bundles
 
-`scenes/index` lists IDs in display order. Each ID has a matching Markdown file.
+`scenes/` holds the default scenes; the published ones live in the private
+scene library ([Writing scenes](../docs/soy/scenes.md)). An `index` lists IDs
+in display order. Each ID has a matching Markdown file.
 
 ```markdown
 ---
@@ -147,8 +152,10 @@ python3 soy/tools/deploy.py --ssh-config PRIVATE_CONFIG \
   --binary ARM_BINARY --receipt output/deployment.json
 ```
 
-The deployer stages a versioned bundle, verifies every file hash and checks
-the requested scene on the phone before switching the current release.
+The deployer installs a new renderer build. Scene changes don't need it:
+`tools/scene.py` publishes them into the running renderer. The deployer stages
+a versioned bundle (`--scenes` picks the bundle), verifies every file hash and
+checks the requested scene on the phone before switching the current release.
 Existing releases are verified and reused without overwriting a running ELF.
 It restarts only the owned renderer, retains the prior release and attempts
 rollback to the prior scene if startup fails. It never stops SSH or Tailscale.

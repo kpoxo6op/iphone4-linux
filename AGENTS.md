@@ -19,8 +19,10 @@ These are owner requirements, including for the master maintainer:
 
 - AI draws all of SoyOS and can redraw it fluidly. There are no apps beyond
   Linux tooling; the product is scenes an LLM creates on request. Do not add
-  app launchers, app stores or app frameworks. How AI updates scenes on the
-  device is still undecided, so don't present a mechanism as final.
+  app launchers, app stores or app frameworks. Put scenes on the phone with
+  `soy/tools/scene.py` ([docs/soy/scenes.md](docs/soy/scenes.md)), the first
+  working path. How AI updates scenes is still open, so don't present that
+  tool as the final mechanism.
 
 - The screen belongs to the content. Never stamp `soy`, a project name, a
   scene counter, debug metadata or decorative branding above every scene.

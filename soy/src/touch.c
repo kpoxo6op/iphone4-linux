@@ -1439,7 +1439,7 @@ static void status(void) {
           ".3f,\"input_present_max_ms\":%.3f,\"transfer_avg_ms\":%.3f,"
           "\"transfer_max_ms\":%.3f,\"scanout_verified\":false,"
           "\"display_state\":\"%s\",\"idle_timeout_s\":%u,"
-          "\"inactive_ms\":%u,\"backlight\":\"%s\",\"buttons\":%s}\n",
+          "\"inactive_ms\":%u,\"backlight\":\"%s\",\"buttons\":%s,",
           headless         ? "headless"
           : direct_display ? "simpledrm"
                            : "framebuffer",
@@ -1456,6 +1456,12 @@ static void status(void) {
           lv_display_get_inactive_time(display),
           backlight_state < 0 ? "unavailable" : backlight_state ? "on" : "off",
           keyfd >= 0 ? "true" : "false");
+  fputs("\"scenes\":[", f);
+  for (int i = 0; i < count; i++)
+    fprintf(f, "%s\"%s\"", i ? "," : "", scenes[i].id);
+  fprintf(f, "],\"bundle_loads\":%u,\"bundle_failures\":%u,"
+             "\"bundle_error\":\"%s\"}\n",
+          bundle_loads, bundle_failures, bundle_error);
   fclose(f);
   rename(tmp, p);
 }
@@ -1574,8 +1580,10 @@ int main(int argc, char **argv) {
         current = i;
         found = 1;
       }
-    if (!found)
+    if (!found) {
+      fprintf(stderr, "Scene '%s' is not in the bundle\n", initial);
       return 2;
+    }
   }
   if (check) {
     printf("Valid bundle: %d scenes; LVGL touch runtime\n", count);
