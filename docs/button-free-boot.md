@@ -61,6 +61,34 @@ Each reboot was `reboot` over SSH. The phone re-enumerated in DFU within
 seconds every time. Raw stage logs are private under
 `.runtime/phone/private/boot-runs/`.
 
+## Kernel choice
+
+The pass boots the [backlight kernel](../kernel/n90-display-power/README.md)
+first (`497fa0e4…`, DTB `9567afd1…` with `panic=10`, both hash-checked from
+`.runtime/phone/private/backlight-20261021/`). If a pass with it fails, the
+next pass boots plain knownboot, and keeps doing so until
+`phone_boot.py reset-failures`. A panic reboots into DFU, where the watcher
+starts that fallback pass. A kernel that hangs without panicking still needs
+a physical reset. `phone_boot.py status` shows `kernel` and
+`backlight_failures`.
+
+At 10:21 UTC a `reboot` came back by itself on the backlight kernel: Linux USB
+at 10:27:31, strict USB and tailnet SSH at 10:27:59, and Soy deployed at
+10:28:14. At 10:29:15 Soy reported `blanked` and `backlight: off`, and PMU
+register `0x68` read `0x00`. The fallback itself has not been exercised; doing
+so would need a deliberately failing kernel.
+
+## Morning check
+
+1. Leave the phone untouched for a minute. The screen should go fully dark,
+   not just black with the light on.
+2. Press Home or Power. The reader should come back lit, at the same place.
+3. Press Power while it is lit. It should go dark at once.
+
+If the screen stays lit while `cat /run/soy/status.json` says
+`backlight: off`, the PMU write is not reaching the panel. Report that in
+issue #4.
+
 ## Display
 
 Soy, with the 60-second idle blanking (`0131047`), is reinstalled at the end of
