@@ -525,8 +525,34 @@ static void update_dots(void) {
     lv_obj_set_style_bg_color(dots[j], color(active ? INK : MUTED), 0);
   }
 }
+/* LVGL's ease-out, rounded to the nearest pixel and landing once within a
+ * pixel and a half, so the last pixels do not wait out the curve's flat tail
+ * (a frame that changes nothing is not drawn, and the next one comes late). */
+static int32_t soy_ease_out(const lv_anim_t *a) {
+  int32_t t = lv_map(a->act_time, 0, a->duration, 0, LV_BEZIER_VAL_MAX);
+  int32_t step = lv_cubic_bezier(t, LV_BEZIER_VAL_FLOAT(0), LV_BEZIER_VAL_FLOAT(0),
+                                 LV_BEZIER_VAL_FLOAT(0.58), LV_BEZIER_VAL_FLOAT(1));
+  int64_t span = (int64_t)a->end_value - a->start_value, moved = span * step;
+  if (llabs(span * LV_BEZIER_VAL_MAX - moved) < 3 * LV_BEZIER_VAL_MAX / 2)
+    return a->end_value;
+  return a->start_value +
+         (int32_t)((moved + (moved < 0 ? -1 : 1) * LV_BEZIER_VAL_MAX / 2) /
+                   LV_BEZIER_VAL_MAX);
+}
+/* Snaps, settles and bounces: about 180 ms for a full page and shorter for a
+ * short distance, so every frame of the slide moves at least a pixel. LVGL's
+ * 200 ms minimum stepped a 3 px snap once every 40 ms. */
+static void pace_scroll(lv_event_t *e) {
+  lv_anim_t *a = lv_event_get_param(e);
+  if (lv_event_get_code(e) != LV_EVENT_SCROLL_BEGIN || !a)
+    return;
+  lv_anim_set_duration(a, clamp(LV_ABS(a->end_value - a->start_value) * 3 / 10,
+                                48, 180));
+  lv_anim_set_path_cb(a, soy_ease_out);
+}
 static void page_event(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
+  pace_scroll(e);
   if (code == LV_EVENT_SCROLL_BEGIN || code == LV_EVENT_SCROLL_END) {
     for (int i = 0; i < count; i++) {
       if (!page_images[i])
@@ -556,6 +582,7 @@ static void page_event(lv_event_t *e) {
 static void body_event(lv_event_t *e) {
   int index = (int)(intptr_t)lv_event_get_user_data(e);
   lv_event_code_t code = lv_event_get_code(e);
+  pace_scroll(e);
   if (code == LV_EVENT_SCROLL &&
       lv_event_get_target_obj(e) == views[index].body) {
     scenes[index].scroll = lv_obj_get_scroll_y(views[index].body);
@@ -746,6 +773,7 @@ static void sheet_event(lv_event_t *e) {
   if (sheet_initializing || !sheet)
     return;
   lv_event_code_t c = lv_event_get_code(e);
+  pace_scroll(e);
   if (sheet_picture &&
       (c == LV_EVENT_SCROLL_BEGIN || c == LV_EVENT_SCROLL_END)) {
     int moving = c == LV_EVENT_SCROLL_BEGIN;
