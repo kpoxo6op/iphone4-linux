@@ -4,10 +4,13 @@ import argparse
 from datetime import datetime, timezone
 import hashlib
 import json
+import fcntl
 import os
 from pathlib import Path
 import re
 import subprocess as sp
+import sys
+import time
 
 import control
 import usb_device_nodes
@@ -133,6 +136,39 @@ def start_boot(value):
            check=False)
 
 
+def sync_scenes(value):
+    """Catch a running phone up with scenes published while it was away.
+
+    soy/tools/scene.py records the library commit the phone last received;
+    a newer one starts one sync. A failed sync is retried after five minutes
+    or once the library changes again.
+    """
+    library = DATA / 'private/scenes'
+    if (value['status'] != 'linux_usb' or not (library / '.git').is_dir() or
+            value.get('identity', {}).get('HardwareModel') != 'N90AP'):
+        return
+    head = sp.run(['git', '-C', str(library), 'rev-parse', 'HEAD'],
+                  capture_output=True, text=True).stdout.strip()
+    synced = library / '.git/soy-synced'
+    attempted = library / '.git/soy-sync-attempted'
+    if not head or (synced.exists() and synced.read_text().strip() == head):
+        return
+    if (attempted.exists() and attempted.read_text().strip() == head and
+            time.time() - attempted.stat().st_mtime < 300):
+        return
+    # A boot pass holds the USB lock and installs the scenes itself.
+    with open(DATA / 'usb-operation.lock', 'w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+    attempted.write_text(head + '\n')
+    sp.run(['systemd-run', '--user', '--no-block', '--collect', '--quiet',
+            '--unit=iphone4-linux-scenes', '-p', 'TimeoutStartSec=6min',
+            sys.executable, str(control.ROOT / 'soy/tools/scene.py'), 'sync'],
+           check=False, capture_output=True)
+
+
 def check():
     cfg = json.loads((control.STATE / 'settings.json').read_text())
     targetfile = DATA / 'private/device-policy.json'
@@ -164,6 +200,7 @@ def check():
             sp.run(['systemctl', '--user', 'start', control.UNIT], check=True)
     phone_reconnect.check(value, DATA)
     start_boot(value)
+    sync_scenes(value)
     print(json.dumps({'status': value['status'], 'changed': changed}))
 
 
