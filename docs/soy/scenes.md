@@ -78,8 +78,9 @@ follows.
 
 | Key | Value |
 | --- | --- |
-| `battery.percent` | `82%`, or `—` without a battery driver |
-| `battery.state` | `Charging`, `Discharging`… or `Battery unavailable` |
+| `battery.percent` | `82%`; `~82%` when estimated from voltage; `—` without a reading |
+| `battery.state` | `Charging`, `On battery`, `On USB power`, `Full`… or `Battery unavailable` |
+| `battery.voltage` | `3.92 V`, or `—` |
 | `net.link` | the interface carrying the default route, `USB` for the cable |
 | `net.wifi` | `Connected`, `Not connected` or `Unavailable` |
 | `net.rx`, `net.tx` | receive and send rates, such as `12 KiB/s` |
