@@ -159,7 +159,9 @@ checks the requested scene on the phone before switching the current release.
 Existing releases are verified and reused without overwriting a running ELF.
 It restarts only the owned renderer, retains the prior release and attempts
 rollback to the prior scene if startup fails. It never stops SSH or Tailscale.
-Power-loss recovery and automatic restart after a later crash remain worker tasks.
+After a later crash the phone's keep supervisor (`kernel/n90-keep`) restarts
+the renderer on the same scene, and goes back to the prior release if it keeps
+crashing.
 
 The private `/run/soy/control` FIFO accepts one command per line:
 

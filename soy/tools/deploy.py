@@ -133,6 +133,8 @@ destination = '/opt/soy/releases/' + release
 switch_attempted = False
 try:
     a.receipt.write_text(json.dumps(record, indent=2) + '\n')
+    # The phone's keep supervisor (kernel/n90-keep) leaves Soy alone meanwhile.
+    remote('mkdir -p /run/keep && echo $(( $(date +%s) + 180 )) > /run/keep/hold-soy')
     remote(f'''set -e
 umask 077
 mkdir -p {stage} /run/soy /var/log
@@ -178,7 +180,7 @@ mv -Tf /opt/soy/current.rollback /opt/soy/current''')
 finally:
     # This path is unique to this invocation and never a live release.
     try:
-        remote(f'rm -rf {stage}')
+        remote(f'rm -rf {stage} /run/keep/hold-soy')
     except Exception as cleanup:
         record['cleanup_error'] = str(cleanup)
     a.receipt.write_text(json.dumps(record, indent=2) + '\n')
