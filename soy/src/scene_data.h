@@ -37,7 +37,7 @@ static int count, current, dirty = 1;
 static char assetdir[512] = "assets", scenedir[512] = "scenes";
 static Font fonts[4];
 static Scene scenes[NS];
-static int battery = -1;
+static int battery = -1, battery_mv = -1, battery_estimate;
 static char battery_state[96] = "Battery unavailable";
 static double battery_history[60], network_history[60];
 static int bn, nn;
@@ -181,29 +181,51 @@ static inline void history(double *a, int *n, double value) {
     a[59] = value;
   }
 }
+/* A kernel power_supply, or the userspace PMU reader (kernel/n90-battery)
+ * that writes the same files under /run/power_supply. */
+static inline int supply_value(const char *dir, const char *name, char *buf,
+                               size_t n) {
+  char p[640]; /* dir is at most 599 bytes; names are short literals */
+  snprintf(p, sizeof p, "%s/%s", dir, name);
+  return read_text(p, buf, n);
+}
 static inline void stats_battery(void) {
   double t = now();
-  char buf[512];
-  battery = -1;
+  char buf[96], dir[600];
+  int usb = 0;
+  battery = battery_mv = -1;
+  battery_estimate = 0;
   strcpy(battery_state, "Battery unavailable");
   glob_t g = {0};
-  if (!glob("/sys/class/power_supply/*/capacity", 0, NULL, &g)) {
-    for (size_t i = 0; i < g.gl_pathc; i++)
-      if (!read_text(g.gl_pathv[i], buf, sizeof buf)) {
-        int v = atoi(buf);
-        if (v >= 0 && v <= 100) {
-          battery = v;
-          char p[600];
-          snprintf(p, sizeof p, "%s", g.gl_pathv[i]);
-          char *q = strrchr(p, '/');
-          strcpy(q, "/status");
-          if (read_text(p, battery_state, sizeof battery_state))
-            strcpy(battery_state, "Battery");
-          break;
-        }
-      }
+  glob("/sys/class/power_supply/*/type", 0, NULL, &g);
+  glob("/run/power_supply/*/type", GLOB_APPEND, NULL, &g);
+  for (size_t i = 0; i < g.gl_pathc; i++) {
+    snprintf(dir, sizeof dir, "%s", g.gl_pathv[i]);
+    *strrchr(dir, '/') = 0;
+    if (supply_value(dir, "type", buf, sizeof buf))
+      continue;
+    if (strcmp(buf, "Battery")) {
+      if (!supply_value(dir, "online", buf, sizeof buf) && atoi(buf) > 0)
+        usb = 1;
+      continue;
+    }
+    if (battery >= 0 || battery_mv >= 0)
+      continue;
+    if (!supply_value(dir, "capacity", buf, sizeof buf) && atoi(buf) >= 0 &&
+        atoi(buf) <= 100 && isdigit((unsigned char)*buf))
+      battery = atoi(buf);
+    if (!supply_value(dir, "voltage_now", buf, sizeof buf) && atol(buf) > 0)
+      battery_mv = (int)(atol(buf) / 1000);
+    battery_estimate = !supply_value(dir, "capacity_source", buf, sizeof buf) &&
+                       !strcmp(buf, "voltage");
+    if (supply_value(dir, "status", battery_state, sizeof battery_state))
+      strcpy(battery_state, "Battery");
   }
   globfree(&g);
+  if (!strcmp(battery_state, "Discharging"))
+    strcpy(battery_state, "On battery");
+  else if (!strcmp(battery_state, "Unknown"))
+    strcpy(battery_state, usb ? "On USB power" : "Battery");
   if (battery >= 0 && (battery_tick < 0 || t - battery_tick >= 60)) {
     history(battery_history, &bn, battery);
     battery_tick = t;
@@ -306,11 +328,17 @@ static inline void stats(void) {
 static inline const char *binding(const char *key, char *out, size_t n) {
   if (!strcmp(key, "battery.percent")) {
     if (battery >= 0)
-      snprintf(out, n, "%d%%", battery);
+      snprintf(out, n, battery_estimate ? "~%d%%" : "%d%%", battery);
     else
       snprintf(out, n, "—");
   } else if (!strcmp(key, "battery.state"))
     snprintf(out, n, "%s", battery_state);
+  else if (!strcmp(key, "battery.voltage")) {
+    if (battery_mv > 0)
+      snprintf(out, n, "%d.%02d V", battery_mv / 1000, battery_mv % 1000 / 10);
+    else
+      snprintf(out, n, "—");
+  }
   else if (!strcmp(key, "net.wifi"))
     snprintf(out, n, "%s", wifi_state);
   else if (!strcmp(key, "net.link"))
