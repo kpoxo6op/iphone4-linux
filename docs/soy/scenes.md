@@ -132,6 +132,30 @@ within about 30 seconds; any later `put`, `publish` or `sync` also brings it
 over, and every boot installs the library's last saved scenes. If those fail on the phone, the boot falls back to
 the default scenes so the screen is never empty.
 
+## What the phone remembers
+
+Soy keeps a journal of what it showed, so whoever draws the next scene can
+see how the last ones were used. It is a JSON line per event in
+`/run/soy/journal.jsonl` on the phone: the renderer starting, each settled
+scene change with how far the scene being left was read, sleep and wake with
+the reason (idle, power, home, touch, remote), text size changes, scene
+reloads, a battery sample every five minutes, and keep's restarts.
+
+The phone watcher copies new lines to `.runtime/phone/private/journal/`
+on this computer about once a minute while the phone is on USB, one file per
+day. The phone keeps its journal in RAM, so a field test away from the laptop
+comes back with it as long as the phone did not reboot.
+
+```sh
+python3 soy/tools/scene.py journal                 # today, in plain words
+python3 soy/tools/scene.py journal --day 2026-10-22
+python3 soy/tools/scene.py journal pull            # copy now
+```
+
+The summary gives screen-on time per scene and how far each was read, the
+battery at the start and end of the day, how the screen woke and slept, and
+anything keep restarted. The journal stays on this computer and out of Git.
+
 ## Before calling a scene done
 
 Look at it: `preview` before publishing, `capture` after. Check the

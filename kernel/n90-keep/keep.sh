@@ -13,6 +13,8 @@ LOG=/run/keep/keep.log
 mkdir -p /run/keep
 
 say() { echo "$(date '+%F %T') $*" >> "$LOG"; }
+# A restart also goes in Soy's journal, which the laptop collects.
+journal() { echo "{\"t\":$(date +%s),\"e\":\"restart\",\"what\":\"$1\"}" >> /run/soy/journal.jsonl; }
 
 held() {
 	[ -f "/run/keep/hold-$1" ] || return 1
@@ -68,6 +70,7 @@ start_soy() {
 }
 
 start() {
+	journal "$1"
 	case "$1" in
 	soy) start_soy ;;
 	touch)

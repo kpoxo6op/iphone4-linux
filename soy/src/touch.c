@@ -15,6 +15,7 @@
 #include <poll.h>
 #include <sched.h>
 #include <signal.h>
+#include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -124,6 +125,51 @@ static void signal_handler(int s) {
     reloading = 1;
   else
     stopping = 1;
+}
+/* The journal: what the phone showed and when, so the AI that draws the
+ * scenes can learn what was read (soy/tools/scene.py journal pulls it).
+ * JSON lines in the run directory, kept to about 1 MiB with one rotation. */
+static FILE *journal;
+static char noted_scene[48];
+static double battery_noted = -1;
+static void note(const char *fmt, ...) {
+  if (!journal)
+    return;
+  struct timespec ts;
+  clock_gettime(CLOCK_REALTIME, &ts);
+  fprintf(journal, "{\"t\":%lld.%03ld,", (long long)ts.tv_sec,
+          ts.tv_nsec / 1000000);
+  va_list ap;
+  va_start(ap, fmt);
+  vfprintf(journal, fmt, ap);
+  va_end(ap);
+  fputs("}\n", journal);
+  fflush(journal);
+  if (ftell(journal) > 1 << 20) {
+    char p[600], old[600];
+    path(p, sizeof p, rundir, "journal.jsonl");
+    path(old, sizeof old, rundir, "journal.1.jsonl");
+    fclose(journal);
+    rename(p, old);
+    journal = fopen(p, "ae");
+  }
+}
+/* A settled scene change, with how far the scene being left was read. */
+static void note_scene(void) {
+  if (current >= count || !strcmp(noted_scene, scenes[current].id))
+    return;
+  int left = -1;
+  for (int i = 0; i < count; i++)
+    if (!strcmp(scenes[i].id, noted_scene))
+      left = i;
+  if (left >= 0)
+    note("\"e\":\"scene\",\"scene\":\"%s\",\"left\":\"%s\",\"scroll\":%d,"
+         "\"height\":%d",
+         scenes[current].id, scenes[left].id, scenes[left].scroll,
+         scenes[left].height);
+  else
+    note("\"e\":\"scene\",\"scene\":\"%s\"", scenes[current].id);
+  snprintf(noted_scene, sizeof noted_scene, "%s", scenes[current].id);
 }
 static lv_color_t color(uint32_t c) { return lv_color_hex(c); }
 static void flat(lv_obj_t *o) {
@@ -571,6 +617,8 @@ static void page_event(lv_event_t *e) {
                            cached ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     }
   }
+  if (code == LV_EVENT_SCROLL_END)
+    note_scene();
   if (code != LV_EVENT_SCROLL)
     return;
   int next = clamp((lv_obj_get_scroll_x(pager) + W / 2) / W, 0, count - 1);
@@ -786,6 +834,8 @@ static void resize_text(int index, int level, int anchor) {
     build_body(index);
   }
   scenes[index].zoom = level;
+  note("\"e\":\"zoom\",\"scene\":\"%s\",\"font_px\":%d", scenes[index].id,
+       body_sizes[level]);
   if (block < v->nblocks)
     y = lv_obj_get_y(v->blocks[block]) +
         (int)(fraction * lv_obj_get_height(v->blocks[block]));
@@ -1075,8 +1125,8 @@ static void open_keys(void) {
   }
   globfree(&g);
 }
-static void wake_display(void);
-static void sleep_display(void);
+static void wake_display(const char *why);
+static void sleep_display(const char *why);
 static void read_keys(void) {
   struct input_event e[16];
   ssize_t n;
@@ -1085,19 +1135,20 @@ static void read_keys(void) {
       if (e[i].type != EV_KEY || e[i].value != 1)
         continue;
       if (e[i].code == KEY_POWER && !blank_screen)
-        sleep_display();
+        sleep_display("power");
       else if (e[i].code == KEY_POWER || e[i].code == KEY_HOME)
-        wake_display();
+        wake_display(e[i].code == KEY_POWER ? "power" : "home");
     }
   if (n < 0 && errno != EAGAIN) {
     close(keyfd);
     keyfd = -1;
   }
 }
-static void wake_display(void) {
+static void wake_display(const char *why) {
   lv_display_trigger_activity(display);
   if (!blank_screen)
     return;
+  note("\"e\":\"wake\",\"why\":\"%s\"", why);
   lv_obj_delete(blank_screen);
   blank_screen = NULL;
   lv_timer_resume(lv_display_get_refr_timer(display));
@@ -1108,9 +1159,12 @@ static void wake_display(void) {
   if (backlight_state == 0)
     set_backlight(1);
 }
-static void sleep_display(void) {
+static void sleep_display(const char *why) {
   if (blank_screen)
     return;
+  note("\"e\":\"sleep\",\"why\":\"%s\",\"scene\":\"%s\",\"scroll\":%d,"
+       "\"height\":%d",
+       why, scenes[current].id, scenes[current].scroll, scenes[current].height);
   end_preview(0);
   zoom_pending = -1;
   cancel_motion();
@@ -1156,7 +1210,7 @@ static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
     if (f.active && !f.cancel) {
       lv_display_trigger_activity(display);
       if (blank_screen && !wake_contact) {
-        wake_display();
+        wake_display("touch");
         wake_contact = 1;
       }
     }
@@ -1503,11 +1557,11 @@ static void status(void) {
 }
 static void command(char *s) {
   if (!strcmp(s, "sleep")) {
-    sleep_display();
+    sleep_display("remote");
     return;
   }
   if (!strcmp(s, "wake")) {
-    wake_display();
+    wake_display("remote");
     return;
   }
   if (!strncmp(s, "idle ", 5)) {
@@ -1517,7 +1571,7 @@ static void command(char *s) {
   }
   if (!strcmp(s, "next") || !strcmp(s, "prev") ||
       !strncmp(s, "goto ", 5) || !strncmp(s, "scroll ", 7))
-    wake_display();
+    wake_display("remote");
   if (!strcmp(s, "next"))
     go(current + 1, 1);
   else if (!strcmp(s, "prev"))
@@ -1685,6 +1739,11 @@ int main(int argc, char **argv) {
   ctl = open(p, O_RDWR | O_NONBLOCK | O_CLOEXEC);
   if (ctl < 0)
     return 2;
+  path(p, sizeof p, rundir, "journal.jsonl");
+  journal = fopen(p, "ae");
+  note("\"e\":\"start\",\"scene\":\"%s\",\"scenes\":%d", scenes[current].id,
+       count);
+  snprintf(noted_scene, sizeof noted_scene, "%s", scenes[current].id);
   signal(SIGINT, signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGHUP, signal_handler);
@@ -1747,6 +1806,12 @@ int main(int argc, char **argv) {
         build_body(current);
         lv_obj_scroll_to_y(views[current].body, scroll, LV_ANIM_OFF);
       }
+      if (stat_phase == 0 && (battery_noted < 0 || t - battery_noted >= 300)) {
+        char state[48];
+        note("\"e\":\"battery\",\"state\":\"%s\",\"mv\":%d,\"percent\":%d",
+             quoted(battery_state, state, sizeof state), battery_mv, battery);
+        battery_noted = t;
+      }
       stats_end = now();
       stats_ms = (stats_end - began) * 1000;
       stat_phase = (stat_phase + 1) % 5;
@@ -1764,8 +1829,10 @@ int main(int argc, char **argv) {
       end_preview(0);
       zoom_pending = -1;
       cancel_motion();
-      if (!load_scenes())
+      if (!load_scenes()) {
         rebuild_pending = 1;
+        note("\"e\":\"scenes\",\"count\":%d", count);
+      }
     }
     if (rebuild_pending) {
       rebuild_pending = 0;
@@ -1791,7 +1858,7 @@ int main(int argc, char **argv) {
         lv_refr_now(display);
       if (idle_seconds && !contacts_active &&
           lv_display_get_inactive_time(display) >= idle_seconds * 1000u)
-        sleep_display();
+        sleep_display("idle");
     }
     if (t >= nextstatus) {
       double began = now();

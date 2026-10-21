@@ -169,6 +169,32 @@ def sync_scenes(value):
            check=False, capture_output=True)
 
 
+def pull_journal(value):
+    """Copy the phone's journal of what it showed here about once a minute.
+
+    soy/tools/scene.py journal pull keeps daily files under private/journal;
+    `scene.py journal` summarises a day for Claude or Boris.
+    """
+    if (value['status'] != 'linux_usb' or
+            value.get('identity', {}).get('HardwareModel') != 'N90AP'):
+        return
+    state = DATA / 'private/journal/state.json'
+    if state.exists() and time.time() - state.stat().st_mtime < 55:
+        return
+    with open(DATA / 'usb-operation.lock', 'w') as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            return
+    state.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    state.touch()
+    sp.run(['systemd-run', '--user', '--no-block', '--collect', '--quiet',
+            '--unit=iphone4-linux-journal', '-p', 'TimeoutStartSec=2min',
+            sys.executable, str(control.ROOT / 'soy/tools/scene.py'), '--host',
+            'iphone4-usb', 'journal', 'pull'],
+           check=False, capture_output=True)
+
+
 def check():
     cfg = json.loads((control.STATE / 'settings.json').read_text())
     targetfile = DATA / 'private/device-policy.json'
@@ -201,6 +227,7 @@ def check():
     phone_reconnect.check(value, DATA)
     start_boot(value)
     sync_scenes(value)
+    pull_journal(value)
     print(json.dumps({'status': value['status'], 'changed': changed}))
 
 
