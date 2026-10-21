@@ -1,5 +1,9 @@
 # Soy: scenes on the real iPhone
 
+**21 October priority change:** [boot and recovery](reliability.md) now take
+precedence. The master owns the connected phone and idle-timeout deployment;
+workers complete their reliability assignments before optional UI tuning.
+
 Owner: DeepSeek workers implement screens and recovery; the master owns the
 LVGL touch integration and reviews bounded handoffs. Existing recovery, remote-access and hardware goals remain
 active. The owner requested this delegation on 20 October 2026.
