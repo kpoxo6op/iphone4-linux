@@ -19,6 +19,8 @@ reach the change stays committed, and the next publish or boot brings it over.
     scene.py preview note --out x.png   render locally at 640 x 960
     scene.py capture --out x.png   save what the phone is showing
     scene.py sync                  make the phone match the library (boot)
+    scene.py journal               what was read on the phone today, and the battery
+    scene.py journal pull          copy the phone's journal here (the watcher does it)
 
 docs/soy/scenes.md describes the scene format and the design rules.
 """
@@ -432,6 +434,133 @@ def publish(library, phone, show=None):
         return 3
 
 
+JOURNAL = PRIVATE / 'journal'
+VIEWPORT = 748  # Soy's reading area, BOTTOM - TOP
+
+
+def journal_pull(phone, directory):
+    """Append the phone's new journal lines to daily files; return how many."""
+    directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+    state_file = directory / 'state.json'
+    try:
+        state = json.loads(state_file.read_text())
+    except (OSError, ValueError):
+        state = {}
+    boot, size = phone.run('cat /proc/sys/kernel/random/boot_id; '
+                           'wc -c < /run/soy/journal.jsonl 2>/dev/null || echo 0'
+                           ).decode().split()[:2]
+    size = int(size)
+    offset = state.get('offset', 0) if state.get('boot_id') == boot else 0
+    if size < offset:  # rotated at 1 MiB; the rotated tail is not fetched
+        offset = 0
+    if size == offset:
+        return 0
+    data = phone.run(f'tail -c +{offset + 1} /run/soy/journal.jsonl')
+    whole = data[:data.rfind(b'\n') + 1]  # a partial last line waits
+    days = {}
+    for line in whole.decode(errors='replace').splitlines():
+        try:
+            event = json.loads(line)
+            day = time.strftime('%Y-%m-%d', time.localtime(float(event['t'])))
+        except (ValueError, KeyError, TypeError):
+            continue
+        event['boot'] = boot[:8]
+        days.setdefault(day, []).append(json.dumps(event, separators=(',', ':')))
+    for day, lines in days.items():
+        with open(directory / f'{day}.jsonl', 'a') as f:
+            f.write(''.join(line + '\n' for line in lines))
+    state_file.write_text(json.dumps({'boot_id': boot, 'offset': offset + len(whole)}) + '\n')
+    return sum(len(lines) for lines in days.values())
+
+
+def minutes(seconds):
+    if seconds < 60:
+        return 'under a minute'
+    m = round(seconds / 60)
+    return f'{m} min' if m < 60 else f'{m // 60} h {m % 60:02d} min'
+
+
+def journal_summary(directory, day, labels):
+    """Plain-language account of one day: reading time, how far, battery."""
+    events = []
+    try:
+        for line in (directory / f'{day}.jsonl').read_text().splitlines():
+            try:
+                events.append(json.loads(line))
+            except ValueError:
+                pass
+    except OSError:
+        pass
+    if not events:
+        return f'No journal for {day}.'
+    events.sort(key=lambda e: e['t'])
+    reading, furthest, wakes, sleeps, restarts, battery = {}, {}, {}, {}, {}, []
+    scene, awake, since, last = None, False, None, None
+
+    def add(name, seconds):
+        if name:
+            reading[name] = reading.get(name, 0) + max(0, min(seconds, 3600))
+
+    def read_to(name, scroll, height):
+        if name and height:
+            furthest[name] = max(furthest.get(name, 0), min(1, (scroll + VIEWPORT) / height))
+
+    for e in events:
+        t, kind = float(e['t']), e.get('e')
+        if kind == 'start':
+            # A renderer that crashed left its last stretch open: count a minute.
+            if awake and last is not None:
+                add(scene, min(t, last + 60) - since)
+            scene, awake, since = e.get('scene'), True, t
+        elif kind == 'scene':
+            if awake:
+                add(scene, t - since)
+            read_to(e.get('left'), e.get('scroll', 0), e.get('height', 0))
+            scene, since = e.get('scene'), t
+        elif kind == 'sleep':
+            if awake:
+                add(scene, t - since)
+            read_to(e.get('scene'), e.get('scroll', 0), e.get('height', 0))
+            awake = False
+            sleeps[e.get('why')] = sleeps.get(e.get('why'), 0) + 1
+        elif kind == 'wake':
+            awake, since = True, t
+            wakes[e.get('why')] = wakes.get(e.get('why'), 0) + 1
+        elif kind == 'battery':
+            battery.append(e)
+        elif kind == 'restart':
+            restarts[e.get('what')] = restarts.get(e.get('what'), 0) + 1
+        last = t
+    if awake:
+        end = min(time.time(), last + 60) if day == time.strftime('%Y-%m-%d') else last
+        add(scene, end - since)
+
+    clock = lambda t: time.strftime('%H:%M', time.localtime(float(t)))
+    out = [f"{time.strftime('%a %d %b %Y', time.strptime(day, '%Y-%m-%d'))}, "
+           f"{clock(events[0]['t'])}-{clock(events[-1]['t'])}"]
+    total = sum(reading.values())
+    out.append(f'Screen on: {minutes(total)}')
+    for name, seconds in sorted(reading.items(), key=lambda kv: -kv[1]):
+        how_far = f', read to {round(furthest[name] * 100)}%' if name in furthest else ''
+        out.append(f'  {labels.get(name, name)}: {minutes(seconds)}{how_far}')
+    if battery:
+        def describe(b):
+            text = {'Discharging': 'on battery'}.get(b.get('state'), (b.get('state') or '').lower())
+            volts = f"{b['mv'] / 1000:.2f} V" if b.get('mv', -1) > 0 else 'no voltage'
+            percent = f" (~{b['percent']}%)" if b.get('percent', -1) >= 0 else ''
+            return f"{text} {volts}{percent} at {clock(b['t'])}"
+        out.append(f'Battery: {describe(battery[0])}; then {describe(battery[-1])}')
+    def times(counts):
+        n = sum(counts.values())
+        how = 'once' if n == 1 else 'twice' if n == 2 else f'{n} times'
+        return f"{how} ({', '.join(f'{k} {v}' for k, v in counts.items())})"
+    if wakes or sleeps:
+        out.append(f'Screen woke {times(wakes)}, slept {times(sleeps)}' if wakes else
+                   f'Screen slept {times(sleeps)}')
+    out.append('Restarted by keep: ' + (times(restarts) if restarts else 'nothing'))
+    return '\n'.join(out)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__.split('\n\n')[0])
     parser.add_argument('--library', type=Path, default=PRIVATE / 'scenes')
@@ -464,13 +593,29 @@ def main():
     capture.add_argument('--out', type=Path, required=True)
     sync_cmd = sub.add_parser('sync', help='make the phone match the library')
     sync_cmd.add_argument('--receipt', type=Path)
+    journal = sub.add_parser('journal', help='what was read on the phone, and the battery')
+    journal.add_argument('action', nargs='?', choices=('pull',), help='copy it from the phone')
+    journal.add_argument('--day', default=time.strftime('%Y-%m-%d'), help='YYYY-MM-DD')
+    journal.add_argument('--dir', type=Path, default=JOURNAL)
     a = parser.parse_args()
     os.umask(0o077)
     if a.library == PRIVATE / 'scenes' and not PRIVATE.is_dir():
         raise Failure(f'{ROOT} has no phone state ({PRIVATE}). Run scene.py from the '
                       'checkout that boots the phone, or pass --library and --ssh-config')
-    library = Library(a.library).open()
     phone = Phone(a.ssh_config, a.host, a.binary)
+    if a.command == 'journal':
+        if a.action == 'pull':
+            print(f'{journal_pull(phone, a.dir)} new journal entries.')
+            return 0
+        labels = {}
+        for md in Path(a.library).glob('*.md'):
+            head = md.read_text(encoding='utf-8', errors='replace').split('\n---\n', 1)[0]
+            for line in head.splitlines():
+                if line.startswith('label:'):
+                    labels[md.stem] = line[6:].strip()
+        print(journal_summary(a.dir, a.day, labels))
+        return 0
+    library = Library(a.library).open()
 
     if a.command == 'put':
         scene_id, text = read_scene(a.file, a.id, a.label, a.accent)
