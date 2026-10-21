@@ -16,9 +16,28 @@ say() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 
 held() {
 	[ -f "/run/keep/hold-$1" ] || return 1
-	until=$(cat "/run/keep/hold-$1" 2>/dev/null)
-	case "$until" in ''|*[!0-9]*) return 1 ;; esac
-	[ "$(date +%s)" -lt "$until" ]
+	t=; read -r t 2>/dev/null < "/run/keep/hold-$1"
+	case "$t" in ''|*[!0-9]*) return 1 ;; esac
+	[ "$(date +%s)" -lt "$t" ]
+}
+
+# Liveness without pidof: pidof reads every /proc/PID/cmdline, which takes
+# each process's mmap lock. A reader that CFS then leaves waiting behind a
+# busy tailscaled blocked Soy's own memory operations for 50 ms at a time.
+# /proc/PID/comm needs no mm lock, and the shell reads it without forking.
+alive() {
+	if [ "$1" = soy ]; then f=/run/soy/renderer.pid; else f=/run/keep/$1.pid; fi
+	p=; read -r p 2>/dev/null < "$f"
+	c=; [ -n "$p" ] && read -r c 2>/dev/null < "/proc/$p/comm"
+	[ -n "$c" ] && [ "$c" = "$2" ] && return 0
+	for d in /proc/[0-9]*; do
+		c=; read -r c 2>/dev/null < "$d/comm"
+		if [ "$c" = "$2" ]; then
+			echo "${d#/proc/}" > "$f"
+			return 0
+		fi
+	done
+	return 1
 }
 
 start_soy() {
@@ -54,12 +73,15 @@ start() {
 	touch)
 		cd /opt/n90-touch && nohup ./n90-touch serve n90-z2.bin \
 			>/run/n90-touch.log 2>&1 </dev/null &
+		echo $! > /run/keep/touch.pid
 		say "started touch" ;;
 	battery)
 		nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 </dev/null &
+		echo $! > /run/keep/battery.pid
 		say "started battery" ;;
 	wdt)
 		nohup /usr/sbin/n90-wdt 60 10 >/run/n90-wdt.log 2>&1 </dev/null &
+		echo $! > /run/keep/wdt.pid
 		say "started watchdog kicker" ;;
 	esac
 }
@@ -73,21 +95,15 @@ installed() {
 	esac
 }
 
-process() {
-	case "$1" in
-	soy) echo soy ;;
-	touch) echo n90-touch ;;
-	battery) echo n90-battery ;;
-	wdt) echo n90-wdt ;;
-	esac
-}
+comm_soy=soy comm_touch=n90-touch comm_battery=n90-battery comm_wdt=n90-wdt
 
 say "keep started"
 missing_soy=0 missing_touch=0 missing_battery=0 missing_wdt=0
 while :; do
 	for s in wdt soy touch battery; do
 		eval "m=\$missing_$s"
-		if ! installed "$s" || held "$s" || pidof "$(process "$s")" >/dev/null; then
+		eval "comm=\$comm_$s"
+		if ! installed "$s" || held "$s" || alive "$s" "$comm"; then
 			m=0
 		else
 			m=$((m + 1))

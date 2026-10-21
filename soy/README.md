@@ -58,7 +58,7 @@ python3 soy/tools/build_touch.py --target armv7 --toolchain /PATH/TO/toolchain/b
 ```
 
 The ARM build enables Cortex-A8 NEON. Immutable paragraphs use LVGL snapshots,
-with a 128 MiB global pixel-cache budget. Bounded immutable documents prepare
+with a 160 MiB global pixel-cache budget. Bounded immutable documents prepare
 the five font layouts before the first frame; pinch release switches layouts
 around the same reading anchor. Larger or live documents still use synchronous
 reflow and must not be called performance-complete. Pixman draws the clipped
