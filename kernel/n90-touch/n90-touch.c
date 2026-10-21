@@ -27,6 +27,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sched.h>
 #include <sys/mman.h>
 #include <sys/stat.h>
 #include <time.h>
@@ -738,6 +739,9 @@ static int read_frame_contacts(struct contact *c, int max)
 	uint8_t tx[0x400], rx[0x400];
 	int len, n = 0;
 
+	/* ATN means the firmware is awake; skip the idle wake frame (2 ms). */
+	last_xfer = now_us();
+
 	memset(tx, 0, 16);
 	tx[0] = flip_nop ? 0xeb : 0xea;
 	tx[1] = cur_nop;
@@ -1032,11 +1036,24 @@ static int serve(const char *fw, const char *cal)
 	fprintf(stderr, "sensor %d x %d, nop flip %d\n", sensor_w, sensor_h, flip_nop);
 	if (uinput_open())
 		return 1;
+	/*
+	 * Run above the renderer so a frame is read the moment ATN rises, not
+	 * after Soy finishes drawing. Each frame costs well under a millisecond,
+	 * and the kernel's RT throttling still reserves CPU for everything else.
+	 */
+	struct sched_param sp = { .sched_priority = 20 };
+
+	if (sched_setscheduler(0, SCHED_FIFO, &sp))
+		perror("SCHED_FIFO");
 	fprintf(stderr, "serving touch events\n");
 	for (;;) {
 		if (pin_get(PIN_ATN) != atn_active_level) {
-			/* 1 ms while a gesture is live, 4 ms when idle. */
-			struct timespec ts = { 0, active ? 1000000 : 4000000 };
+			/*
+			 * 1 ms while a gesture is live. 8 ms when idle: each wakeup
+			 * preempts the renderer, and the controller only scans every
+			 * 16 ms anyway.
+			 */
+			struct timespec ts = { 0, active ? 1000000 : 8000000 };
 
 			if (active && now_us() - last_frame > 250000)
 				active = 0;

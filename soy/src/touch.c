@@ -13,6 +13,7 @@
 #include <lvgl/lvgl.h>
 #include <math.h>
 #include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -809,10 +810,19 @@ static void open_sheet(int kind, int from_edge) {
   close_pending = 0;
   /* A modal freezes its underlay. An opaque object also lets LVGL cull the
    * covered page tree; a transparent image alone does not establish cover. */
-  if (cache_bytes + PIXEL_BYTES < CACHE_LIMIT) {
-    lv_draw_buf_t *buf =
-        lv_draw_buf_create(W, H, LV_COLOR_FORMAT_XRGB8888, W * 4);
-    if (buf) {
+  /* The backdrop buffer is allocated and touched once: a fresh 2.4 MB
+   * allocation page-faults on the first frame of every sheet gesture. */
+  static lv_draw_buf_t *backdrop;
+  if (!backdrop && cache_bytes + PIXEL_BYTES < CACHE_LIMIT) {
+    backdrop = lv_draw_buf_create(W, H, LV_COLOR_FORMAT_XRGB8888, W * 4);
+    if (backdrop) {
+      memset(backdrop->data, 0, PIXEL_BYTES);
+      cache_bytes += backdrop->data_size;
+    }
+  }
+  if (backdrop) {
+    lv_draw_buf_t *buf = backdrop;
+    {
       memcpy(buf->data, pixels, PIXEL_BYTES);
       /* One fixed dimmed backdrop, rather than blending the whole display
        * for every pixel of panel movement. Keep the hot path to opaque copies.
@@ -823,9 +833,8 @@ static void open_sheet(int kind, int from_edge) {
       lv_image_set_src(sheet_backdrop, buf);
       lv_obj_set_style_bg_opa(sheet_backdrop, LV_OPA_COVER, 0);
       lv_obj_set_clickable(sheet_backdrop, false);
-      lv_obj_add_event_cb(sheet_backdrop, free_label_image, LV_EVENT_DELETE,
-                          buf);
-      cache_bytes += buf->data_size;
+      /* Reusing the buffer is safe: LV_CACHE_DEF_SIZE is 0, so LVGL keeps
+       * no decoded copy keyed by this pointer. */
     }
   }
   sheet_shield = lv_obj_create(lv_screen_active());
@@ -902,9 +911,21 @@ static void open_sheet(int kind, int from_edge) {
   lv_obj_set_size(handle, 64, 4);
   lv_obj_set_clickable(handle, false);
   lv_obj_update_layout(sheet_card);
-  if (cache_bytes + (size_t)W * sheet_height * 4 < CACHE_LIMIT) {
-    lv_draw_buf_t *buf = lv_snapshot_take(sheet_card, LV_COLOR_FORMAT_XRGB8888);
-    if (buf) {
+  /* One card buffer sized for the tallest sheet, allocated and touched once,
+   * so opening a sheet does not page-fault a fresh snapshot allocation. */
+  static lv_draw_buf_t *card;
+  if (!card && cache_bytes + (size_t)W * 800 * 4 < CACHE_LIMIT) {
+    card = lv_draw_buf_create(W, 800, LV_COLOR_FORMAT_XRGB8888, W * 4);
+    if (card) {
+      memset(card->data, 0, (size_t)W * 800 * 4);
+      cache_bytes += card->data_size;
+    }
+  }
+  if (card && lv_snapshot_reshape_draw_buf(sheet_card, card) == LV_RESULT_OK &&
+      lv_snapshot_take_to_draw_buf(sheet_card, LV_COLOR_FORMAT_XRGB8888, card) ==
+          LV_RESULT_OK) {
+    lv_draw_buf_t *buf = card;
+    {
       lv_draw_buf_set_flag(buf, LV_IMAGE_FLAGS_USER1);
       sheet_picture = lv_image_create(sheet);
       lv_image_set_src(sheet_picture, buf);
@@ -912,9 +933,6 @@ static void open_sheet(int kind, int from_edge) {
       lv_obj_set_clickable(sheet_picture, false);
       lv_obj_set_snappable(sheet_picture, false);
       lv_obj_set_hidden(sheet_picture, true);
-      lv_obj_add_event_cb(sheet_picture, free_label_image, LV_EVENT_DELETE,
-                          buf);
-      cache_bytes += buf->data_size;
     }
   }
   lv_obj_add_event_cb(sheet, sheet_event, LV_EVENT_ALL, NULL);
@@ -1628,6 +1646,15 @@ int main(int argc, char **argv) {
   signal(SIGHUP, signal_handler);
   set_backlight(1);
   open_keys();
+  /* Real-time priority below the touch driver (n90-touch, FIFO 20) so
+   * tailscaled bursts and telemetry readers cannot preempt a frame. The
+   * loop sleeps in poll() when nothing moves, and the kernel's RT throttling
+   * keeps 5% of each second for SSH. SOY_RT=0 opts out. */
+  if (direct_display && (!getenv("SOY_RT") || strcmp(getenv("SOY_RT"), "0"))) {
+    struct sched_param rt = {.sched_priority = 10};
+    if (sched_setscheduler(0, SCHED_FIFO, &rt))
+      perror("SCHED_FIFO");
+  }
   double nextstats = now() + .2, nextstatus = 0, prepare_after = now() + .15;
   unsigned stat_phase = 0;
   char commands[4096];
@@ -1704,7 +1731,20 @@ int main(int argc, char **argv) {
         !pointer_pressed)
       prepare_page();
     if (!blank_screen) {
+      /* Release snaps, momentum and sheet settles run on LVGL's 8 ms anim
+       * timer. A frame takes ~12 ms, so waiting for the next anim tick after
+       * one completes misses 16.67 ms. While anything animates, step the
+       * animations and draw again at once. */
+      int animating = lv_anim_count_running();
+      if (animating) {
+        lv_anim_refr_now();
+        lv_timer_ready(lv_display_get_refr_timer(display));
+      }
       lv_timer_handler();
+      /* An animation's last step and its scroll-end handlers invalidate
+       * content after this refresh started; draw it now, not a tick later. */
+      if (animating || moving)
+        lv_refr_now(display);
       if (idle_seconds && !contacts_active &&
           lv_display_get_inactive_time(display) >= idle_seconds * 1000u)
         sleep_display();

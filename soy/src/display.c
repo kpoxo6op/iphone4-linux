@@ -11,6 +11,10 @@
 #include <sys/ioctl.h>
 #include <sys/mman.h>
 #include <unistd.h>
+#ifdef __ARM_NEON
+#include <arm_neon.h>
+#endif
+#include <stdlib.h>
 
 /* Fixed-panel adapter, using the toolchain's Linux DRM UAPI. Unlike the
  * general LVGL DRM driver, this doesn't wait for a synthetic page flip or
@@ -23,6 +27,80 @@ static struct drm_mode_crtc previous;
 static struct drm_mode_create_dumb buffer;
 static struct drm_mode_fb_cmd framebuffer;
 static void *mapped = MAP_FAILED;
+
+/*
+ * Direct scanout copy. simpledrm's DIRTYFB copies damage into the boot
+ * framebuffer with the kernel memcpy: 9.5 ms for a full frame on the phone.
+ * The same frame copied with 128-bit NEON stores through a write-combined
+ * /dev/mem mapping of that framebuffer takes 3.3 ms (22 October 2026). The
+ * DRM state above is unchanged; only who copies the pixels changes.
+ * LVGL renders into a cached heap buffer. SOY_SCANOUT=dirtyfb restores the
+ * kernel copy.
+ */
+static uint8_t *scanout = MAP_FAILED, *shadow;
+static int memfd = -1;
+
+static unsigned long scanout_base(void) {
+  FILE *f = fopen("/proc/iomem", "r");
+  char line[256];
+  unsigned long start = 0, end = 0, found = 0;
+  if (!f)
+    return 0;
+  while (fgets(line, sizeof line, f))
+    if (strstr(line, ": simpledrm") &&
+        sscanf(line, " %lx-%lx", &start, &end) == 2 &&
+        end - start + 1 >= 640 * 960 * 4) {
+      found = start;
+      break;
+    }
+  fclose(f);
+  return found;
+}
+
+static void scanout_close(void) {
+  if (scanout != MAP_FAILED)
+    munmap(scanout, 640 * 960 * 4);
+  scanout = MAP_FAILED;
+  if (memfd >= 0)
+    close(memfd);
+  memfd = -1;
+  free(shadow);
+  shadow = NULL;
+}
+
+static uint8_t *scanout_open(void) {
+  const char *mode = getenv("SOY_SCANOUT");
+  unsigned long base;
+  if ((mode && !strcmp(mode, "dirtyfb")) || !(base = scanout_base()))
+    return NULL;
+  memfd = open("/dev/mem", O_RDWR | O_SYNC | O_CLOEXEC);
+  if (memfd < 0)
+    return NULL;
+  scanout = mmap(NULL, 640 * 960 * 4, PROT_READ | PROT_WRITE, MAP_SHARED, memfd,
+                 (off_t)base);
+  if (scanout == MAP_FAILED ||
+      posix_memalign((void **)&shadow, 64, 640 * 960 * 4)) {
+    scanout_close();
+    return NULL;
+  }
+  return shadow;
+}
+
+static void copy_row(uint8_t *d, const uint8_t *s, size_t n) {
+#ifdef __ARM_NEON
+  for (; n >= 64; n -= 64, d += 64, s += 64) {
+    uint8x16_t a = vld1q_u8(s), b = vld1q_u8(s + 16), c = vld1q_u8(s + 32),
+               e = vld1q_u8(s + 48);
+    vst1q_u8(d, a);
+    vst1q_u8(d + 16, b);
+    vst1q_u8(d + 32, c);
+    vst1q_u8(d + 48, e);
+  }
+  for (; n >= 16; n -= 16, d += 16, s += 16)
+    vst1q_u8(d, vld1q_u8(s));
+#endif
+  memcpy(d, s, n);
+}
 
 static int call(unsigned long request, void *arg) {
   int r;
@@ -43,6 +121,7 @@ void soy_display_close(void) {
   }
   if (framebuffer.fb_id)
     call(DRM_IOCTL_MODE_RMFB, &framebuffer.fb_id);
+  scanout_close();
   if (mapped != MAP_FAILED)
     munmap(mapped, buffer.size);
   if (buffer.handle) {
@@ -113,9 +192,12 @@ uint32_t *soy_display_open(void) {
   if (call(DRM_IOCTL_MODE_SETCRTC, &set))
     goto fail;
   active = 1;
+  uint8_t *direct = scanout_open();
+  if (direct)
+    memcpy(direct, mapped, 640 * 960 * 4);
   if (soy_display_present(0, 0, 640, 960))
     goto fail;
-  return mapped;
+  return direct ? (uint32_t *)direct : mapped;
 fail:
   soy_display_close();
   errno = ENOTSUP;
@@ -127,6 +209,13 @@ int soy_display_present(int x1, int y1, int x2, int y2) {
       x2 <= x1 || y2 <= y1) {
     errno = EINVAL;
     return -1;
+  }
+  if (scanout != MAP_FAILED) {
+    /* 16-byte aligned spans: 4 pixels either side at most. */
+    size_t from = (size_t)(x1 & ~3) * 4, to = (size_t)((x2 + 3) & ~3) * 4;
+    for (int y = y1; y < y2; y++)
+      copy_row(scanout + y * 2560 + from, shadow + y * 2560 + from, to - from);
+    return 0;
   }
   struct drm_clip_rect clip = {.x1 = x1, .y1 = y1, .x2 = x2, .y2 = y2};
   struct drm_mode_fb_dirty_cmd dirty = {.fb_id = framebuffer.fb_id,

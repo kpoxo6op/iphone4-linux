@@ -57,11 +57,13 @@ MAX_FAILURES = 3
 # Test boots only: replace a knownboot upload with another file for one pass.
 OVERRIDES = {}
 # Preferred kernel: knownboot plus the N90 display-power drivers
-# (kernel/n90-display-power). After a failed pass with it, the next pass
-# boots plain knownboot; a successful backlight boot clears that.
-BACKLIGHT = PRIVATE / 'backlight-20261021'
+# (kernel/n90-display-power), built lean (no lockdep or tracer, 24 MHz
+# sched_clock, HZ 1000, uinput built in). After a failed pass with it, the
+# next pass boots plain knownboot; a successful boot clears that. The record
+# keeps calling it "backlight".
+BACKLIGHT = PRIVATE / 'lean-20261022'
 BACKLIGHT_SHA256 = {
-    'zImage': '497fa0e4fa0b0c673c7e68cd06bf4b598564893d56f150851c9320ee92b44e7f',
+    'zImage': 'e899dceb2bea264a3470aaa3647bc3a64b8c65736a00366ad43fd4ad4a745973',
     'n90-boot.dtb': '9567afd1d6328a3fac8a3372a3019a7a01195fc8c44d1062cd81fba0a3ff2754',
 }
 
