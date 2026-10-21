@@ -256,10 +256,12 @@ def restore_identity(run):
             if result.returncode:
                 raise StageFailed('Identity installation failed on the phone')
         log(run, 'identity_installed')
-        time.sleep(5)
-    checked = ssh('iphone4-usb', 'cat /proc/sys/kernel/random/boot_id; date +%s')
-    if checked.returncode:
-        raise StageFailed('Saved host key did not verify over USB')
+    # Dropbear restarts in the background; allow it time to listen again.
+    deadline = time.monotonic() + 60
+    while (checked := ssh('iphone4-usb', 'cat /proc/sys/kernel/random/boot_id; date +%s')).returncode:
+        if time.monotonic() > deadline:
+            raise StageFailed('Saved host key did not verify over USB')
+        time.sleep(3)
     boot_id, clock = checked.stdout.decode().split()[:2]
     if abs(int(clock) - time.time()) > 120:
         ssh('iphone4-usb', f'date -s @{int(time.time())} >/dev/null')
