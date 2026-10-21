@@ -31,6 +31,15 @@ Apple's [discoverability](https://developer.apple.com/videos/play/wwdc2021/10126
 and [motion](https://developer.apple.com/design/human-interface-guidelines/motion)
 guidance. These explain behavior and legibility, beyond a screenshot's style.
 
+## Scenes, not apps
+
+AI draws SoyOS and keeps redrawing it as people ask for changes. There are no
+apps beyond Linux tooling. The unit of design is a scene an LLM builds for one
+person's request. So these foundations describe what a good scene is, not a
+fixed component library. A generated scene must meet them as fully as a
+hand-written one. How AI will draw and update scenes on the device is still
+open (see [the design guide](design.md#ai-draws-soyos)).
+
 ## Start with the person's purpose
 
 Nielsen's guidance asks interfaces to expose relevant state, use familiar

@@ -17,6 +17,11 @@ Pixman 0.46.4 supplies cached image composition and the pinch preview scaler. Th
 adapter reports completion of damage copies, not synchronized panel scanout.
 These are owner requirements, including for the master maintainer:
 
+- AI draws all of SoyOS and can redraw it fluidly. There are no apps beyond
+  Linux tooling; the product is scenes an LLM creates on request. Do not add
+  app launchers, app stores or app frameworks. How AI updates scenes on the
+  device is still undecided, so don't present a mechanism as final.
+
 - The screen belongs to the content. Never stamp `soy`, a project name, a
   scene counter, debug metadata or decorative branding above every scene.
   A concise scene title or the actual author of a post is useful context.
