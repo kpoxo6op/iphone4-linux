@@ -78,7 +78,7 @@ follows.
 
 | Key | Value |
 | --- | --- |
-| `battery.percent` | `82%`; `~82%` when estimated from voltage; `—` without a reading |
+| `battery.percent` | `82%`; `~82%` when estimated from voltage (on battery only); `—` without a reading |
 | `battery.state` | `Charging`, `On battery`, `On USB power`, `Full`… or `Battery unavailable` |
 | `battery.voltage` | `3.92 V`, or `—` |
 | `net.link` | the interface carrying the default route, `USB` for the cable |

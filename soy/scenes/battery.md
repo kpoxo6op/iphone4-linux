@@ -6,6 +6,7 @@ hero: true
 ---
 # {{battery.percent}}
 {{battery.state}}
+{{battery.voltage}}
 
 ## Last hour
 {{graph.battery}}

@@ -389,6 +389,7 @@ def boot(run, record):
     deploy_watchdog(run)
     deploy_display(run)
     deploy_touch(run)
+    deploy_battery(run)
     return boot_id
 
 
@@ -442,6 +443,27 @@ def deploy_watchdog(run):
         'iphone4-usb', 'nohup /usr/sbin/n90-wdt 60 10 >/run/n90-wdt.log 2>&1 </dev/null & '
         'sleep 1; pidof n90-wdt').returncode == 0
     log(run, 'watchdog_armed' if started else 'watchdog_failed')
+
+
+def deploy_battery(run):
+    """Battery readings and the charger restart (kernel/n90-battery).
+
+    The PMU's charge timer runs out after a long time on USB and only the OS
+    restarts it; without this the phone drains while plugged in. Not a boot
+    failure if it cannot start.
+    """
+    binary = ROOT / 'output/battery/n90-battery'
+    if not binary.exists():
+        log(run, 'battery_skipped', reason='no n90-battery build')
+        return
+    sent = ssh('iphone4-usb', 'killall n90-battery 2>/dev/null; '
+               'cat > /usr/sbin/n90-battery.new && chmod 755 /usr/sbin/n90-battery.new && '
+               'mv /usr/sbin/n90-battery.new /usr/sbin/n90-battery',
+               stdin=binary.read_bytes())
+    started = sent.returncode == 0 and ssh(
+        'iphone4-usb', 'nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 '
+        '</dev/null & sleep 2; cat /run/power_supply/battery/status').returncode == 0
+    log(run, 'battery_started' if started else 'battery_failed')
 
 
 TOUCH_FIRMWARE = PRIVATE / 'touch/n90-z2-0x0098.bin'
