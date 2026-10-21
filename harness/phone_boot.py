@@ -390,6 +390,7 @@ def boot(run, record):
     deploy_display(run)
     deploy_touch(run)
     deploy_battery(run)
+    deploy_keep(run)
     return boot_id
 
 
@@ -464,6 +465,22 @@ def deploy_battery(run):
         'iphone4-usb', 'nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 '
         '</dev/null & sleep 2; cat /run/power_supply/battery/status').returncode == 0
     log(run, 'battery_started' if started else 'battery_failed')
+
+
+def deploy_keep(run):
+    """Restart the phone's services if one stops (kernel/n90-keep).
+
+    Last, once everything it watches is running. Busybox init respawns it from
+    an inittab entry, so the phone looks after itself away from the laptop.
+    """
+    script = ROOT / 'kernel/n90-keep/keep.sh'
+    sent = ssh('iphone4-usb', 'cat > /usr/sbin/n90-keep.new && chmod 755 /usr/sbin/n90-keep.new '
+               '&& mv /usr/sbin/n90-keep.new /usr/sbin/n90-keep && killall n90-keep 2>/dev/null; '
+               'grep -qx "::respawn:/usr/sbin/n90-keep" /etc/inittab || '
+               'echo "::respawn:/usr/sbin/n90-keep" >> /etc/inittab; kill -HUP 1; sleep 2; '
+               'pidof n90-keep', stdin=script.read_bytes())
+    log(run, 'keep_started' if sent.returncode == 0 else 'keep_failed',
+        detail=sent.stderr.decode()[-200:])
 
 
 TOUCH_FIRMWARE = PRIVATE / 'touch/n90-z2-0x0098.bin'

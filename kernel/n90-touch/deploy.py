@@ -33,7 +33,9 @@ def remote(command, data=None, timeout=45):
     return sp.run(ssh + [command], input=data, capture_output=True, timeout=timeout)
 
 
-remote('killall n90-touch 2>/dev/null; mkdir -p /opt/n90-touch')
+# The phone's keep supervisor (kernel/n90-keep) leaves touch alone meanwhile.
+remote('mkdir -p /run/keep && echo $(( $(date +%s) + 120 )) > /run/keep/hold-touch; '
+       'killall n90-touch 2>/dev/null; mkdir -p /opt/n90-touch')
 for path, target in ((a.binary, 'n90-touch'), (a.firmware, 'n90-z2.bin')):
     r = remote(f'cat > /opt/n90-touch/{target}.new && mv /opt/n90-touch/{target}.new '
                f'/opt/n90-touch/{target}', path.read_bytes())
@@ -50,7 +52,9 @@ remote('cd /opt/n90-touch && nohup ./n90-touch serve n90-z2.bin '
 for _ in range(30):
     time.sleep(1)
     if NAME in remote('cat /proc/bus/input/devices').stdout.decode():
+        remote('rm -f /run/keep/hold-touch')
         print('touch device ready')
         sys.exit(0)
-print(remote('tail -20 /run/n90-touch.log').stdout.decode(), file=sys.stderr)
+print(remote('tail -20 /run/n90-touch.log; rm -f /run/keep/hold-touch').stdout.decode(),
+      file=sys.stderr)
 raise SystemExit('touch device did not appear')
