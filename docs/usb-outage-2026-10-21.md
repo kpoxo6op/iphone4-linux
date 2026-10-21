@@ -1,5 +1,11 @@
 # USB outage — 21 October 2026
 
+**Resolved.** The 13:52 DFU-IPSW restore and a 14:00 RAM boot brought Linux USB
+back. SSH then failed only because the fresh boot had a new host key, empty
+Tailscale state and a 1970 clock. Both are now restored automatically; see
+[boot without buttons](button-free-boot.md). The cause of the 08:42 stall is
+still unknown.
+
 The phone stopped answering USB at 08:42 NZDT. The owner reports that the
 cable stayed connected and the screen still shows Soy/Linux. A retained
 screen image does not establish that the kernel is still running.

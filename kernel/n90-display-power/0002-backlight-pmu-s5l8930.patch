@@ -1,0 +1,176 @@
+--- a/drivers/video/backlight/Kconfig
++++ b/drivers/video/backlight/Kconfig
+@@ -301,6 +301,19 @@
+ 	  To compile this driver as a module, choose M here: the module will
+ 	  be called apple_dwi_bl.
+ 
++config BACKLIGHT_S5L8930_PMU
++	tristate "S5L8930 PMU LCD backlight"
++	depends on I2C
++	depends on BACKLIGHT_CLASS_DEVICE
++	help
++	  Say Y to control the LCD backlight on Apple S5L8930 devices
++	  (iPhone 4 / N90AP) through the PMU registers 0x66/0x67/0x68.
++	  The register contract comes from openiBoot plat-a4; it is not a
++	  hardware-verified result.
++
++	  To compile this driver as a module, choose M here: the module will
++	  be called pmu-s5l8930-backlight.
++
+ config BACKLIGHT_QCOM_WLED
+ 	tristate "Qualcomm PMIC WLED Driver"
+ 	select REGMAP
+--- a/drivers/video/backlight/Makefile
++++ b/drivers/video/backlight/Makefile
+@@ -53,6 +53,7 @@
+ obj-$(CONFIG_BACKLIGHT_PWM)		+= pwm_bl.o
+ obj-$(CONFIG_BACKLIGHT_QCOM_WLED)	+= qcom-wled.o
+ obj-$(CONFIG_BACKLIGHT_RT4831)		+= rt4831-backlight.o
++obj-$(CONFIG_BACKLIGHT_S5L8930_PMU)	+= pmu-s5l8930-backlight.o
+ obj-$(CONFIG_BACKLIGHT_SAHARA)		+= kb3886_bl.o
+ obj-$(CONFIG_BACKLIGHT_SKY81452)	+= sky81452-backlight.o
+ obj-$(CONFIG_BACKLIGHT_TPS65217)	+= tps65217_bl.o
+--- /dev/null
++++ b/drivers/video/backlight/pmu-s5l8930-backlight.c
+@@ -0,0 +1,141 @@
++// SPDX-License-Identifier: GPL-2.0-only
++/*
++ * PMU backlight driver for the Apple S5L8930 (iPhone 4 / N90AP).
++ *
++ * The S5L8930 PMU (D1815 class) is an I2C device.  The LCD backlight is
++ * controlled through three PMU registers:
++ *
++ *   0x66  high 8 bits of the 11-bit level
++ *   0x67  low 3 bits
++ *   0x68  enable value 0x15, off value 0x00
++ *
++ * This contract is taken from openiBoot plat-a4/clcd.c:
++ * LCD_MAX_BACKLIGHT 2047, LCD_BACKLIGHT_HIGH_REG 0x66,
++ * LCD_BACKLIGHT_LOW_REG 0x67, backlightData {0x66,0xD4},
++ * {0x67,0x0}, {0x68,0x15} and backlightOffData {0x68,0x0}.  It is
++ * source evidence, not a hardware-verified result.
++ */
++
++#include <linux/backlight.h>
++#include <linux/err.h>
++#include <linux/i2c.h>
++#include <linux/module.h>
++#include <linux/of.h>
++#include <linux/property.h>
++
++#define PMU_BACKLIGHT_HIGH_REG		0x66
++#define PMU_BACKLIGHT_LOW_REG		0x67
++#define PMU_BACKLIGHT_ENABLE_REG	0x68
++#define PMU_BACKLIGHT_ENABLE_VALUE	0x15
++#define PMU_BACKLIGHT_MAX		2047
++
++struct pmu_backlight {
++	struct i2c_client *client;
++};
++
++static int pmu_backlight_write(struct pmu_backlight *pbl, u32 level)
++{
++	struct i2c_client *client = pbl->client;
++	int ret;
++
++	if (level > PMU_BACKLIGHT_MAX)
++		level = PMU_BACKLIGHT_MAX;
++
++	/*
++	 * Order follows openiBoot clcd_set_backlight_level(): high, low,
++	 * then enable.  There is no source-grounded read-back sequence.
++	 */
++	ret = i2c_smbus_write_byte_data(client, PMU_BACKLIGHT_HIGH_REG,
++					level >> 3);
++	if (ret)
++		return ret;
++
++	ret = i2c_smbus_write_byte_data(client, PMU_BACKLIGHT_LOW_REG,
++					level & 0x7);
++	if (ret)
++		return ret;
++
++	return i2c_smbus_write_byte_data(client, PMU_BACKLIGHT_ENABLE_REG,
++					 PMU_BACKLIGHT_ENABLE_VALUE);
++}
++
++static int pmu_backlight_update_status(struct backlight_device *bd)
++{
++	struct pmu_backlight *pbl = bl_get_data(bd);
++
++	if (backlight_is_blank(bd))
++		return i2c_smbus_write_byte_data(pbl->client,
++						 PMU_BACKLIGHT_ENABLE_REG, 0);
++
++	return pmu_backlight_write(pbl, bd->props.brightness);
++}
++
++static const struct backlight_ops pmu_backlight_ops = {
++	.update_status = pmu_backlight_update_status,
++};
++
++static int pmu_backlight_probe(struct i2c_client *client)
++{
++	struct backlight_properties props;
++	struct pmu_backlight *pbl;
++	struct backlight_device *bd;
++	u32 default_level = PMU_BACKLIGHT_MAX;
++
++	device_property_read_u32(&client->dev, "default-brightness-level",
++				 &default_level);
++	if (default_level > PMU_BACKLIGHT_MAX)
++		default_level = PMU_BACKLIGHT_MAX;
++
++	pbl = devm_kzalloc(&client->dev, sizeof(*pbl), GFP_KERNEL);
++	if (!pbl)
++		return -ENOMEM;
++
++	pbl->client = client;
++
++	memset(&props, 0, sizeof(props));
++	props.type = BACKLIGHT_RAW;
++	props.max_brightness = PMU_BACKLIGHT_MAX;
++	props.brightness = default_level;
++	props.power = BACKLIGHT_POWER_ON;
++
++	bd = devm_backlight_device_register(&client->dev, "pmu-backlight",
++					    &client->dev, pbl,
++					    &pmu_backlight_ops, &props);
++	if (IS_ERR(bd))
++		return dev_err_probe(&client->dev, PTR_ERR(bd),
++				     "failed to register backlight\n");
++
++	i2c_set_clientdata(client, bd);
++	return 0;
++}
++
++/*
++ * No .get_brightness callback: the PMU registers are write-only in the
++ * available source evidence, so the backlight core keeps reporting the
++ * requested brightness and does not claim a measured hardware value.
++ */
++
++static const struct of_device_id pmu_backlight_of_match[] = {
++	{ .compatible = "apple,s5l8930-pmu-backlight" },
++	{ }
++};
++MODULE_DEVICE_TABLE(of, pmu_backlight_of_match);
++
++static const struct i2c_device_id pmu_backlight_id[] = {
++	{ "pmu-backlight" },
++	{ }
++};
++MODULE_DEVICE_TABLE(i2c, pmu_backlight_id);
++
++static struct i2c_driver pmu_backlight_driver = {
++	.driver = {
++		.name = "pmu-s5l8930-backlight",
++		.of_match_table = pmu_backlight_of_match,
++	},
++	.probe = pmu_backlight_probe,
++	.id_table = pmu_backlight_id,
++};
++module_i2c_driver(pmu_backlight_driver);
++
++MODULE_DESCRIPTION("S5L8930 PMU LCD backlight driver");
++MODULE_LICENSE("GPL");

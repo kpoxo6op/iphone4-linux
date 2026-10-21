@@ -8,10 +8,12 @@
 #include <fcntl.h>
 #include <glob.h>
 #include <linux/fb.h>
+#include <linux/input.h>
 #include <linux/kd.h>
 #include <lvgl/lvgl.h>
 #include <math.h>
 #include <poll.h>
+#include <sched.h>
 #include <signal.h>
 #include <stdint.h>
 #include <stdio.h>
@@ -65,6 +67,9 @@ static lv_display_t *display;
 static lv_indev_t *pointer;
 static lv_obj_t *blank_screen;
 static unsigned idle_seconds = 60;
+/* -1: no backlight device, 0: off, 1: on. */
+static int backlight_state = -1;
+static int keyfd = -1;
 static int wake_contact;
 static uint32_t fallback_pixels[W * H];
 static uint32_t *pixels = fallback_pixels;
@@ -805,10 +810,19 @@ static void open_sheet(int kind, int from_edge) {
   close_pending = 0;
   /* A modal freezes its underlay. An opaque object also lets LVGL cull the
    * covered page tree; a transparent image alone does not establish cover. */
-  if (cache_bytes + PIXEL_BYTES < CACHE_LIMIT) {
-    lv_draw_buf_t *buf =
-        lv_draw_buf_create(W, H, LV_COLOR_FORMAT_XRGB8888, W * 4);
-    if (buf) {
+  /* The backdrop buffer is allocated and touched once: a fresh 2.4 MB
+   * allocation page-faults on the first frame of every sheet gesture. */
+  static lv_draw_buf_t *backdrop;
+  if (!backdrop && cache_bytes + PIXEL_BYTES < CACHE_LIMIT) {
+    backdrop = lv_draw_buf_create(W, H, LV_COLOR_FORMAT_XRGB8888, W * 4);
+    if (backdrop) {
+      memset(backdrop->data, 0, PIXEL_BYTES);
+      cache_bytes += backdrop->data_size;
+    }
+  }
+  if (backdrop) {
+    lv_draw_buf_t *buf = backdrop;
+    {
       memcpy(buf->data, pixels, PIXEL_BYTES);
       /* One fixed dimmed backdrop, rather than blending the whole display
        * for every pixel of panel movement. Keep the hot path to opaque copies.
@@ -819,9 +833,8 @@ static void open_sheet(int kind, int from_edge) {
       lv_image_set_src(sheet_backdrop, buf);
       lv_obj_set_style_bg_opa(sheet_backdrop, LV_OPA_COVER, 0);
       lv_obj_set_clickable(sheet_backdrop, false);
-      lv_obj_add_event_cb(sheet_backdrop, free_label_image, LV_EVENT_DELETE,
-                          buf);
-      cache_bytes += buf->data_size;
+      /* Reusing the buffer is safe: LV_CACHE_DEF_SIZE is 0, so LVGL keeps
+       * no decoded copy keyed by this pointer. */
     }
   }
   sheet_shield = lv_obj_create(lv_screen_active());
@@ -898,9 +911,21 @@ static void open_sheet(int kind, int from_edge) {
   lv_obj_set_size(handle, 64, 4);
   lv_obj_set_clickable(handle, false);
   lv_obj_update_layout(sheet_card);
-  if (cache_bytes + (size_t)W * sheet_height * 4 < CACHE_LIMIT) {
-    lv_draw_buf_t *buf = lv_snapshot_take(sheet_card, LV_COLOR_FORMAT_XRGB8888);
-    if (buf) {
+  /* One card buffer sized for the tallest sheet, allocated and touched once,
+   * so opening a sheet does not page-fault a fresh snapshot allocation. */
+  static lv_draw_buf_t *card;
+  if (!card && cache_bytes + (size_t)W * 800 * 4 < CACHE_LIMIT) {
+    card = lv_draw_buf_create(W, 800, LV_COLOR_FORMAT_XRGB8888, W * 4);
+    if (card) {
+      memset(card->data, 0, (size_t)W * 800 * 4);
+      cache_bytes += card->data_size;
+    }
+  }
+  if (card && lv_snapshot_reshape_draw_buf(sheet_card, card) == LV_RESULT_OK &&
+      lv_snapshot_take_to_draw_buf(sheet_card, LV_COLOR_FORMAT_XRGB8888, card) ==
+          LV_RESULT_OK) {
+    lv_draw_buf_t *buf = card;
+    {
       lv_draw_buf_set_flag(buf, LV_IMAGE_FLAGS_USER1);
       sheet_picture = lv_image_create(sheet);
       lv_image_set_src(sheet_picture, buf);
@@ -908,9 +933,6 @@ static void open_sheet(int kind, int from_edge) {
       lv_obj_set_clickable(sheet_picture, false);
       lv_obj_set_snappable(sheet_picture, false);
       lv_obj_set_hidden(sheet_picture, true);
-      lv_obj_add_event_cb(sheet_picture, free_label_image, LV_EVENT_DELETE,
-                          buf);
-      cache_bytes += buf->data_size;
     }
   }
   lv_obj_add_event_cb(sheet, sheet_event, LV_EVENT_ALL, NULL);
@@ -971,6 +993,66 @@ static void end_preview(int commit) {
   }
   preview_scale = 1;
 }
+static void set_backlight(int on) {
+  glob_t g = {0};
+  /* Only the phone's PMU backlight; never a desktop panel during host tests. */
+  if (headless || glob("/sys/class/backlight/pmu-backlight/bl_power", 0, NULL, &g)) {
+    globfree(&g);
+    backlight_state = -1;
+    return;
+  }
+  int ok = 0;
+  for (size_t i = 0; i < g.gl_pathc; i++) {
+    int fd = open(g.gl_pathv[i], O_WRONLY | O_CLOEXEC);
+    /* FB_BLANK_UNBLANK 0, FB_BLANK_POWERDOWN 4. */
+    if (fd >= 0) {
+      ok |= write(fd, on ? "0\n" : "4\n", 2) == 2;
+      close(fd);
+    }
+  }
+  globfree(&g);
+  backlight_state = ok ? on : -1;
+}
+/* Physical buttons (gpio-keys-polled) wake the screen; Power also sleeps it. */
+static void open_keys(void) {
+  glob_t g = {0};
+  if (keyfd >= 0 || glob("/dev/input/event*", 0, NULL, &g)) {
+    globfree(&g);
+    return;
+  }
+  for (size_t i = 0; i < g.gl_pathc && keyfd < 0; i++) {
+    char name[64] = "";
+    int fd = open(g.gl_pathv[i], O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (fd < 0)
+      continue;
+    ioctl(fd, EVIOCGNAME(sizeof name - 1), name);
+    /* The N90 buttons only; a host keyboard's power key is not ours. */
+    if (!headless && !strcmp(name, "gpio-keys-polled"))
+      keyfd = fd;
+    else
+      close(fd);
+  }
+  globfree(&g);
+}
+static void wake_display(void);
+static void sleep_display(void);
+static void read_keys(void) {
+  struct input_event e[16];
+  ssize_t n;
+  while ((n = read(keyfd, e, sizeof e)) > 0)
+    for (size_t i = 0; i < (size_t)n / sizeof e[0]; i++) {
+      if (e[i].type != EV_KEY || e[i].value != 1)
+        continue;
+      if (e[i].code == KEY_POWER && !blank_screen)
+        sleep_display();
+      else if (e[i].code == KEY_POWER || e[i].code == KEY_HOME)
+        wake_display();
+    }
+  if (n < 0 && errno != EAGAIN) {
+    close(keyfd);
+    keyfd = -1;
+  }
+}
 static void wake_display(void) {
   lv_display_trigger_activity(display);
   if (!blank_screen)
@@ -980,6 +1062,10 @@ static void wake_display(void) {
   lv_timer_resume(lv_display_get_refr_timer(display));
   lv_timer_ready(lv_display_get_refr_timer(display));
   lv_obj_invalidate(lv_screen_active());
+  /* Light the panel only after the restored scene is in the buffer. */
+  lv_refr_now(display);
+  if (backlight_state == 0)
+    set_backlight(1);
 }
 static void sleep_display(void) {
   if (blank_screen)
@@ -996,8 +1082,8 @@ static void sleep_display(void) {
   for (int i = 0; i < SOY_CONTACTS; i++)
     released[i] = (lv_indev_touch_data_t){.id = i, .state = LV_INDEV_STATE_RELEASED};
   lv_indev_gesture_recognizers_update(pointer, released, SOY_CONTACTS);
-  /* simpledrm has no panel/backlight power control. Keep this honest: black
-   * pixels and paused rendering, not hardware power-off or system suspend. */
+  /* Black pixels and paused rendering, then the PMU backlight off when the
+   * kernel exposes one. This is not panel power-off or system suspend. */
   blank_screen = lv_obj_create(lv_layer_sys());
   flat(blank_screen);
   lv_obj_set_style_bg_color(blank_screen, lv_color_black(), 0);
@@ -1005,6 +1091,7 @@ static void sleep_display(void) {
   lv_obj_set_scrollable(blank_screen, false);
   lv_refr_now(display);
   lv_timer_pause(lv_display_get_refr_timer(display));
+  set_backlight(0);
 }
 static int set_idle_timeout(const char *s) {
   if (!*s || strspn(s, "0123456789") != strlen(s))
@@ -1352,7 +1439,7 @@ static void status(void) {
           ".3f,\"input_present_max_ms\":%.3f,\"transfer_avg_ms\":%.3f,"
           "\"transfer_max_ms\":%.3f,\"scanout_verified\":false,"
           "\"display_state\":\"%s\",\"idle_timeout_s\":%u,"
-          "\"inactive_ms\":%u,\"backlight_power_control\":false}\n",
+          "\"inactive_ms\":%u,\"backlight\":\"%s\",\"buttons\":%s}\n",
           headless         ? "headless"
           : direct_display ? "simpledrm"
                            : "framebuffer",
@@ -1366,7 +1453,9 @@ static void status(void) {
           frames ? render_sum / frames : 0, n ? sorted[(n - 1) * 95 / 100] : 0,
           render_max, latency_max, frames ? transfer_sum / frames : 0,
           transfer_max, blank_screen ? "blanked" : "awake", idle_seconds,
-          lv_display_get_inactive_time(display));
+          lv_display_get_inactive_time(display),
+          backlight_state < 0 ? "unavailable" : backlight_state ? "on" : "off",
+          keyfd >= 0 ? "true" : "false");
   fclose(f);
   rename(tmp, p);
 }
@@ -1555,6 +1644,17 @@ int main(int argc, char **argv) {
   signal(SIGINT, signal_handler);
   signal(SIGTERM, signal_handler);
   signal(SIGHUP, signal_handler);
+  set_backlight(1);
+  open_keys();
+  /* Real-time priority below the touch driver (n90-touch, FIFO 20) so
+   * tailscaled bursts and telemetry readers cannot preempt a frame. The
+   * loop sleeps in poll() when nothing moves, and the kernel's RT throttling
+   * keeps 5% of each second for SSH. SOY_RT=0 opts out. */
+  if (direct_display && (!getenv("SOY_RT") || strcmp(getenv("SOY_RT"), "0"))) {
+    struct sched_param rt = {.sched_priority = 10};
+    if (sched_setscheduler(0, SCHED_FIFO, &rt))
+      perror("SCHED_FIFO");
+  }
   double nextstats = now() + .2, nextstatus = 0, prepare_after = now() + .15;
   unsigned stat_phase = 0;
   char commands[4096];
@@ -1588,6 +1688,7 @@ int main(int argc, char **argv) {
         break;
       case 4:
         soy_input_scan();
+        open_keys();
         break;
       }
       nextstats += .2;
@@ -1630,7 +1731,20 @@ int main(int argc, char **argv) {
         !pointer_pressed)
       prepare_page();
     if (!blank_screen) {
+      /* Release snaps, momentum and sheet settles run on LVGL's 8 ms anim
+       * timer. A frame takes ~12 ms, so waiting for the next anim tick after
+       * one completes misses 16.67 ms. While anything animates, step the
+       * animations and draw again at once. */
+      int animating = lv_anim_count_running();
+      if (animating) {
+        lv_anim_refr_now();
+        lv_timer_ready(lv_display_get_refr_timer(display));
+      }
       lv_timer_handler();
+      /* An animation's last step and its scroll-end handlers invalidate
+       * content after this refresh started; draw it now, not a tick later. */
+      if (animating || moving)
+        lv_refr_now(display);
       if (idle_seconds && !contacts_active &&
           lv_display_get_inactive_time(display) >= idle_seconds * 1000u)
         sleep_display();
@@ -1642,14 +1756,21 @@ int main(int argc, char **argv) {
       status_ms = (status_end - began) * 1000;
       nextstatus = t + .1;
     }
-    struct pollfd fds[9] = {{ctl, POLLIN, 0}};
+    struct pollfd fds[10] = {{ctl, POLLIN, 0}};
     int nfds = 1 + soy_input_pollfds(fds + 1, 8);
+    int keyslot = -1;
+    if (keyfd >= 0) {
+      keyslot = nfds;
+      fds[nfds++] = (struct pollfd){keyfd, POLLIN, 0};
+    }
     /* A refresh that exceeded its period is already due. Do not add a
      * mandatory extra millisecond to every late frame. Idle timers still wait.
      */
     uint32_t wait = blank_screen ? 100 : lv_timer_get_time_to_next();
     poll(fds, nfds, blank_screen ? 100 : clamp(wait, 0, 8));
-    for (int i = 1; i < nfds; i++)
+    if (keyslot >= 0 && fds[keyslot].revents & (POLLIN | POLLHUP | POLLERR))
+      read_keys();
+    for (int i = 1; i < (keyslot >= 0 ? keyslot : nfds); i++)
       if (fds[i].revents & (POLLIN | POLLHUP | POLLERR)) {
         /* Preserve LVGL's bounded input processing and timer ownership. A
          * queued contact must not wait for the next periodic input tick. */
@@ -1693,6 +1814,10 @@ int main(int argc, char **argv) {
   end_preview(0);
   if (blank_screen)
     lv_obj_delete(blank_screen);
+  if (backlight_state == 0)
+    set_backlight(1);
+  if (keyfd >= 0)
+    close(keyfd);
   lv_obj_clean(lv_screen_active());
   for (int i = 0; i < NS; i++) {
     free_blocks(&views[i]);

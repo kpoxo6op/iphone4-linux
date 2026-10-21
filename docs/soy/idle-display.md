@@ -20,7 +20,16 @@ Tailscale could reach the phone during this change.**
 - Nothing is added to the visible interface. This is not a lock screen or an
   authentication feature. The system does not suspend or reboot.
 
-## Backlight is a separate unfinished capability
+## Backlight
+
+**21 October 2026, evening:** with the [N90 display-power kernel](../../kernel/n90-display-power/README.md),
+Soy switches the PMU backlight off when it blanks and back on when it wakes. It
+also wakes on the Home or Power button, and Power puts it to sleep. The PMU
+register readback confirms each switch; no one has yet looked at the panel.
+On the knownboot kernel, which has no backlight device, status reports
+`backlight: unavailable` and the behaviour below still applies.
+
+### Earlier analysis (knownboot kernel)
 
 The pinned phone kernel's N90 device tree declares only a `simple-framebuffer`
 for display output. It declares no backlight or physical key input device.
