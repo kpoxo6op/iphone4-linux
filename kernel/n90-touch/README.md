@@ -48,19 +48,49 @@ From the iOS 7.1.2 kernelcache (`AppleMultitouchSPI` 250.16.5):
 5. EXECUTE (`1d 53`, address `0x10001800`, value 1), wait 40 ms.
 6. Before talking to running firmware after 100 ms idle: `ee` wake frame.
 
-## Status
+## Status, 22 October 2026
 
-`z2probe.c` (userspace, `/dev/mem` + `/dev/i2c-0`) performs steps 1–5 on the
-phone. All register writes and the firmware upload are acknowledged, and the
-image reads back correctly. The controller's CPU never starts: its data RAM
-(`0x400000`–`0x410000`, stack top `0x410000`) is untouched after EXECUTE and
-the bus keeps answering with HBPP status words (`0x4879` idle, `0x4f81` for
-firmware commands). Leading suspects: missing factory calibration (MtCl lives
-in NAND syscfg on this phone; there is no SPI NOR), or a reference clock the
-FLL (`0x1000300c`) needs.
+The controller runs Apple's firmware on the phone. The missing piece was the
+clock: PMU GPIO 0 must read `0x53`. openiBoot leaves it at `0x13`, which keeps
+the bootloader talking but never starts the controller's CPU (its data RAM
+stays untouched after EXECUTE). With `0x53` the CPU zeroes its BSS, raises
+ATN after calibration, and answers reports:
+
+| Report | Value |
+|---|---|
+| Interface version | 1, max packet 660 bytes |
+| Family ID (`0xd1`) | `0x55` |
+| Sensor (`0xd3`) | 15 rows × 10 columns, bcdVersion `0x98` |
+| Surface (`0xd9`) | 5000 × 7500 (0.01 mm: 50 × 75 mm) |
+
+The bus runs at 8 MHz with 5/10 µs CS delays once the firmware is up
+(Apple's node: 124 ns SCLK). The bootloader stage keeps openiBoot's 83 kHz
+and 4.5 MHz.
+
+`n90-touch serve` publishes touches through uinput as "Apple N1 multitouch
+(iPhone 4)" (bus SPI, Type B slots, 640 × 960, `INPUT_PROP_DIRECT`), which Soy
+counts as a physical input. It polls ATN every 1 ms during a gesture and 4 ms
+when idle (under 1% CPU). Not yet verified: frames from an actual finger,
+the finger-state values (Touch Bar Z2 uses 3 = start, 4 = move), and the axis
+orientation (Y is flipped like openiBoot; `Z2_FLIP_X`, `Z2_FLIP_Y`, `Z2_SWAP`
+override). `Z2_RAW=n` logs the first n raw frames to stderr.
+
+No factory calibration is loaded: this phone keeps MtCl in NAND syscfg and
+iOS proceeds without it too.
+
+## Running it
 
 ```sh
-arm-buildroot-linux-gnueabihf-gcc -O2 -Wall -static -o z2probe z2probe.c
-z2probe power 1
-z2probe seq n90-z2.bin R0x404d40 1aa1 w300 R0x404d40   # CPU-run check
+make                                   # output/touch/n90-touch
+./extract_firmware.py <iPhone3,1_7.1.2_11D257_Restore.ipsw> \
+    ../../.runtime/phone/private/touch/n90-z2-0x0098.bin
+./deploy.py --ssh-config ../../.runtime/phone/private/ssh_config \
+    --binary ../../output/touch/n90-touch \
+    --firmware ../../.runtime/phone/private/touch/n90-z2-0x0098.bin \
+    --uinput-ko ../../output/touch/uinput.ko
 ```
+
+`harness/phone_boot.py` runs the same deploy after Soy on every boot. The
+backlight kernel built uinput as a module; `CONFIG_INPUT_UINPUT=y` is now in
+the config fragment, and until the next kernel build the matching
+`uinput.ko` (built from the same tree, kernel `497fa0e4`) is copied over.

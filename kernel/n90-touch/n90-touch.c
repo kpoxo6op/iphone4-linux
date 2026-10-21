@@ -1,23 +1,27 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * Userspace bring-up probe for the N90 (iPhone 4) Zephyr2 touch controller.
+ * Userspace driver for the N90 (iPhone 4) touch controller, an Apple N1
+ * multitouch chip on SPI1.
  *
- * Drives SPI1, the GPIO pins and the PMU directly so the protocol can be
- * proven before it moves into a kernel driver. The wiring comes from Apple's
- * N90 device tree (iOS 7.1.2): SPI1 at 0x82100000, reset GPIO 20, chip
- * select GPIO 49, ATN GPIO 21, power from PMU LDO12 (reg 0x16 bit 1).
- * The protocol follows openiBoot plat-s5l8900/multitouch-z2.c.
+ * Drives SPI1, the GPIO pins and the PMU through /dev/mem and /dev/i2c-0.
+ * The wiring comes from Apple's N90 device tree (iOS 7.1.2): SPI1 at
+ * 0x82100000, reset GPIO 20, chip select GPIO 49, ATN GPIO 21, power from
+ * PMU LDO12 (reg 0x16 bit 1), clock enable on PMU GPIO 0. The boot sequence
+ * follows AppleMultitouchN1SPI in the iOS 7.1.2 kernelcache; the HBPP and
+ * report framing follow openiBoot plat-s5l8900/multitouch-z2.c.
  *
- * Usage: z2probe <cmd> [args]
+ * Usage: n90-touch <cmd> [args]
  *   regs                 dump SPI1, pins and PMU state
  *   power <0|1>          switch the touch LDO
  *   atn <ms>             print ATN level transitions for <ms>
  *   boot <fw> [cal]      reset, upload firmware (and calibration), start
  *   run <fw> [cal]       boot, then print finger frames until killed
+ *   serve <fw> [cal]     boot, then publish touches as a uinput multitouch device
  */
 #include <errno.h>
 #include <fcntl.h>
 #include <linux/i2c-dev.h>
+#include <linux/uinput.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -134,6 +138,13 @@ static void power(int on)
 	}
 	v = on ? (v | PMU_LDO12) : (v & ~PMU_LDO12);
 	pmu_write(PMU_LDO_EN, v);
+	/*
+	 * PMU GPIO 0 is the controller's clock_enable. Bit 6 has to be set:
+	 * with openiBoot's 0x13 the controller's CPU never starts (no clock),
+	 * with 0x53 EXECUTE runs the firmware.
+	 */
+	if (on)
+		pmu_write(0x50, 0x53);
 	printf("pmu 0x16 = 0x%02x\n", pmu_read(PMU_LDO_EN));
 }
 
@@ -211,7 +222,7 @@ static int spi_xfer(const uint8_t *tx, uint8_t *rx, int len)
 }
 
 struct speed { uint32_t hz; unsigned int tx_delay, rx_delay; };
-static const struct speed normal = { 83000, 5000, 10000 };
+static struct speed normal = { 83000, 5000, 10000 };
 static const struct speed fast = { 4500000, 0, 10000 };
 
 static uint64_t last_xfer;
@@ -660,6 +671,16 @@ static int boot(const char *fw_path, const char *cal_path)
 	udelay(1000);
 
 	fw_running = 1;
+	if (getenv("Z2_RUN_HZ")) {
+		/*
+		 * Apple's N90 node gives 124 ns SCLK and 5/10 us CS delays
+		 * (reg = 0, 124, mode, 5000, 10000); openiBoot used 83 kHz
+		 * and milliseconds, far too slow for 60 fps frames.
+		 */
+		normal.hz = atoi(getenv("Z2_RUN_HZ"));
+		normal.tx_delay = 5;
+		normal.rx_delay = 10;
+	}
 	if (getenv("Z2_TB"))
 		return 0;
 	if (get_interface_version())
@@ -673,6 +694,22 @@ static int boot(const char *fw_path, const char *cal_path)
 		       rep[1], rep[2], bcd, rep[0]);
 		flip_nop = bcd > 0x23;
 	}
+	{
+		/*
+		 * AutomaticallySetOperatingMode (N90 personality): SET report
+		 * 0xab (rOPERATING_MODE) = 0x00 as a short control write.
+		 */
+		uint8_t op[16] = { 0xe4, 0xab, 0x01, 0x00 }, opr[16];
+
+		put_sum16(op, 14);
+		mt_txrx(&normal, op, opr, 16);
+		udelay(25);
+		memset(op, 0, 16);
+		op[0] = 0xe4;
+		mt_txrx(&normal, op, opr, 16);
+		printf("operating mode set, status rx %02x %02x %02x %02x\n",
+		       opr[0], opr[1], opr[2], opr[3]);
+	}
 	if (!get_report(0xd9, rep, &rlen)) {
 		uint32_t w, h;
 
@@ -685,10 +722,21 @@ static int boot(const char *fw_path, const char *cal_path)
 	return 0;
 }
 
-static int read_frame(void)
+struct contact {
+	int id, state, x, y, major;
+};
+
+static int raw_dumps;
+
+/*
+ * Read one frame after ATN (openiBoot multitouch-z2.c framing, NOP flip for
+ * bcdVersion > 0x23). Returns the number of contacts, 0 for an empty frame,
+ * -1 on a transport or checksum error.
+ */
+static int read_frame_contacts(struct contact *c, int max)
 {
-	uint8_t tx[0x200], rx[0x200];
-	int len;
+	uint8_t tx[0x400], rx[0x400];
+	int len, n = 0;
 
 	memset(tx, 0, 16);
 	tx[0] = flip_nop ? 0xeb : 0xea;
@@ -698,41 +746,77 @@ static int read_frame(void)
 	if (!sum16_ok(rx, 14))
 		return -1;
 	len = rx[1] | rx[2] << 8;
-	if (len) {
-		len += 5;
-		if (len > 0x200)
-			len = 0x200;
-		memset(tx, 0, len);
-		tx[0] = flip_nop ? 0xeb : 0xea;
-		tx[1] = cur_nop;
-		tx[2] = 1;
-		uint32_t sum = 0;
-
-		for (int i = 0; i < 14; i++)
-			sum += tx[i];
-		tx[len - 2] = sum & 0xff;
-		tx[len - 1] = sum >> 8;
-		mt_txrx(&normal, tx, rx, len);
-		int plen = rx[2] | rx[3] << 8;
-
-		if (plen > 2 && rx[5 + 18] > 0) {
-			const uint8_t *h = rx + 5;
-			int nf = h[18], flen = h[19];
-			const uint8_t *f = h + h[2];
-
-			printf("frame %3d fingers %d:", h[1], nf);
-			for (int i = 0; i < nf; i++, f += flen) {
-				int16_t x = f[4] | f[5] << 8, y = f[6] | f[7] << 8;
-
-				printf(" [id %d ev %d x %d y %d]", f[0], f[1], x, y);
-			}
-			printf("\n");
-			fflush(stdout);
-		}
-	}
 	if (flip_nop)
 		cur_nop = cur_nop == 1 ? 2 : 1;
-	return 0;
+	if (!len)
+		return 0;
+	len += 5;
+	if (len > (int)sizeof(rx))
+		return -1;
+	memset(tx, 0, len);
+	tx[0] = flip_nop ? 0xeb : 0xea;
+	tx[1] = flip_nop ? (cur_nop == 1 ? 2 : 1) : cur_nop;
+	tx[2] = 1;
+	uint32_t sum = 0;
+
+	for (int i = 0; i < 14; i++)
+		sum += tx[i];
+	tx[len - 2] = sum & 0xff;
+	tx[len - 1] = sum >> 8;
+	mt_txrx(&normal, tx, rx, len);
+
+	uint32_t hs = 0;
+
+	for (int i = 0; i < 5; i++)
+		hs += rx[i];
+	if (hs & 0xff)
+		return -1;
+	int plen = rx[2] | rx[3] << 8;
+
+	if (plen <= 2)
+		return 0;
+	if (raw_dumps > 0) {
+		raw_dumps--;
+		fprintf(stderr, "raw %d:", len);
+		for (int i = 0; i < len && i < 120; i++)
+			fprintf(stderr, " %02x", rx[i]);
+		fprintf(stderr, "\n");
+	}
+	const uint8_t *h = rx + 5;
+	int hlen = h[2], nf = h[16], flen = h[17];
+
+	/* 0x44/0x43 are finger frames; others (0x50 status, ...) carry none. */
+	if (h[0] != 0x44 && h[0] != 0x43)
+		return 0;
+
+	if (hlen < 12 || flen < 8 || 5 + hlen + nf * flen > len)
+		return -1;
+	const uint8_t *f = h + hlen;
+
+	for (int i = 0; i < nf && n < max; i++, f += flen) {
+		c[n].id = f[0];
+		c[n].state = f[1];
+		c[n].x = (int16_t)(f[4] | f[5] << 8);
+		c[n].y = (int16_t)(f[6] | f[7] << 8);
+		c[n].major = flen >= 20 ? (f[18] | f[19] << 8) : 0;
+		n++;
+	}
+	return n;
+}
+
+static int read_frame(void)
+{
+	struct contact c[16];
+	int n = read_frame_contacts(c, 16);
+
+	if (n > 0) {
+		printf("fingers %d:", n);
+		for (int i = 0; i < n; i++)
+			printf(" [id %d st %d x %d y %d]", c[i].id, c[i].state,
+			       c[i].x, c[i].y);
+		printf("\n");
+	}
+	return n < 0 ? -1 : 0;
 }
 
 /* Touch Bar style read (mainline apple_z2.c): 0xEB length, then payload. */
@@ -769,6 +853,216 @@ static int tb_read(int dump)
 	return 0;
 }
 
+
+/* --- serve: physical touch as a Linux multitouch device via uinput ------ */
+
+#define SLOTS 10
+#define SCREEN_W 640
+#define SCREEN_H 960
+
+static int ui = -1;
+
+static void emit(int type, int code, int value)
+{
+	struct input_event ev = { .type = type, .code = code, .value = value };
+
+	if (write(ui, &ev, sizeof(ev)) != sizeof(ev))
+		perror("uinput write");
+}
+
+static void abs_setup(struct uinput_abs_setup *a, int code, int min, int max)
+{
+	memset(a, 0, sizeof(*a));
+	a->code = code;
+	a->absinfo.minimum = min;
+	a->absinfo.maximum = max;
+	if (ioctl(ui, UI_ABS_SETUP, a) < 0)
+		perror("UI_ABS_SETUP");
+}
+
+static int uinput_open(void)
+{
+	struct uinput_setup us = { 0 };
+	struct uinput_abs_setup a;
+
+	ui = open("/dev/uinput", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+	if (ui < 0) {
+		perror("/dev/uinput");
+		return -1;
+	}
+	ioctl(ui, UI_SET_EVBIT, EV_KEY);
+	ioctl(ui, UI_SET_KEYBIT, BTN_TOUCH);
+	ioctl(ui, UI_SET_EVBIT, EV_ABS);
+	ioctl(ui, UI_SET_PROPBIT, INPUT_PROP_DIRECT);
+	abs_setup(&a, ABS_X, 0, SCREEN_W - 1);
+	abs_setup(&a, ABS_Y, 0, SCREEN_H - 1);
+	abs_setup(&a, ABS_MT_SLOT, 0, SLOTS - 1);
+	abs_setup(&a, ABS_MT_TRACKING_ID, 0, 65535);
+	abs_setup(&a, ABS_MT_POSITION_X, 0, SCREEN_W - 1);
+	abs_setup(&a, ABS_MT_POSITION_Y, 0, SCREEN_H - 1);
+	abs_setup(&a, ABS_MT_TOUCH_MAJOR, 0, 65535);
+	/* The digitizer is real hardware on SPI; only the driver is userspace. */
+	us.id.bustype = BUS_SPI;
+	us.id.vendor = 0x05ac;
+	us.id.product = 0x0090;
+	snprintf(us.name, sizeof(us.name), "Apple N1 multitouch (iPhone 4)");
+	if (ioctl(ui, UI_DEV_SETUP, &us) < 0 || ioctl(ui, UI_DEV_CREATE) < 0) {
+		perror("uinput create");
+		return -1;
+	}
+	return 0;
+}
+
+static int flip_x, flip_y = 1, swap_xy;
+
+static void to_screen(const struct contact *c, int *x, int *y)
+{
+	long sx = swap_xy ? c->y : c->x, sy = swap_xy ? c->x : c->y;
+	long w = swap_xy ? sensor_h : sensor_w, h = swap_xy ? sensor_w : sensor_h;
+
+	if (flip_x)
+		sx = w - sx;
+	if (flip_y)
+		sy = h - sy;
+	*x = sx * (SCREEN_W - 1) / (w > 0 ? w : 1);
+	*y = sy * (SCREEN_H - 1) / (h > 0 ? h : 1);
+	if (*x < 0) *x = 0;
+	if (*x >= SCREEN_W) *x = SCREEN_W - 1;
+	if (*y < 0) *y = 0;
+	if (*y >= SCREEN_H) *y = SCREEN_H - 1;
+}
+
+/* Touch Bar Z2 state values: 3 = touch started, 4 = touch moved. */
+static int is_down(int state)
+{
+	return state == 3 || state == 4;
+}
+
+static void report(const struct contact *c, int n)
+{
+	static int slot_id[SLOTS], slot_used[SLOTS], next_tracking = 1;
+	int seen[SLOTS] = { 0 }, any = 0;
+
+	for (int i = 0; i < n; i++) {
+		int s, free_s = -1;
+
+		if (!is_down(c[i].state))
+			continue;
+		for (s = 0; s < SLOTS; s++) {
+			if (slot_used[s] && slot_id[s] == c[i].id)
+				break;
+			if (!slot_used[s] && free_s < 0)
+				free_s = s;
+		}
+		if (s == SLOTS) {
+			if (free_s < 0)
+				continue;
+			s = free_s;
+			slot_used[s] = 1;
+			slot_id[s] = c[i].id;
+			emit(EV_ABS, ABS_MT_SLOT, s);
+			emit(EV_ABS, ABS_MT_TRACKING_ID, next_tracking++ & 0xffff);
+		} else {
+			emit(EV_ABS, ABS_MT_SLOT, s);
+		}
+		int x, y;
+
+		to_screen(&c[i], &x, &y);
+		emit(EV_ABS, ABS_MT_POSITION_X, x);
+		emit(EV_ABS, ABS_MT_POSITION_Y, y);
+		emit(EV_ABS, ABS_MT_TOUCH_MAJOR, c[i].major);
+		if (!any) {
+			emit(EV_ABS, ABS_X, x);
+			emit(EV_ABS, ABS_Y, y);
+		}
+		seen[s] = 1;
+		any = 1;
+	}
+	for (int s = 0; s < SLOTS; s++) {
+		if (slot_used[s] && !seen[s]) {
+			emit(EV_ABS, ABS_MT_SLOT, s);
+			emit(EV_ABS, ABS_MT_TRACKING_ID, -1);
+			slot_used[s] = 0;
+		}
+	}
+	emit(EV_KEY, BTN_TOUCH, any);
+	emit(EV_SYN, SYN_REPORT, 0);
+}
+
+static int serve(const char *fw, const char *cal)
+{
+	struct contact c[16];
+	int errors = 0, active = 0;
+	uint64_t last_frame = 0;
+
+	if (getenv("Z2_FLIP_X"))
+		flip_x = atoi(getenv("Z2_FLIP_X"));
+	if (getenv("Z2_FLIP_Y"))
+		flip_y = atoi(getenv("Z2_FLIP_Y"));
+	if (getenv("Z2_SWAP"))
+		swap_xy = atoi(getenv("Z2_SWAP"));
+	raw_dumps = getenv("Z2_RAW") ? atoi(getenv("Z2_RAW")) : 0;
+	if (!getenv("Z2_RUN_HZ"))
+		setenv("Z2_RUN_HZ", "8000000", 1);
+	setenv("Z2_TB", "1", 1);
+	pin_out(PIN_CS, 1);
+	for (int tries = 0; boot(fw, cal); tries++) {
+		if (tries == 3)
+			return 1;
+		power(0);
+		usleep(500000);
+	}
+	/* boot() in Z2_TB mode stops before reports; fetch what we need. */
+	{
+		uint8_t rep[0x200];
+		int rlen;
+
+		if (get_interface_version() == 0 && !get_report(0xd3, rep, &rlen))
+			flip_nop = (rep[3] << 8 | rep[4]) > 0x23;
+		uint8_t op[16] = { 0xe4, 0xab, 0x01, 0x00 }, opr[16];
+
+		put_sum16(op, 14);
+		mt_txrx(&normal, op, opr, 16);
+		if (!get_report(0xd9, rep, &rlen) && rlen >= 8) {
+			memcpy(&sensor_w, rep, 4);
+			memcpy(&sensor_h, rep + 4, 4);
+		}
+		cur_nop = 1;
+	}
+	fprintf(stderr, "sensor %d x %d, nop flip %d\n", sensor_w, sensor_h, flip_nop);
+	if (uinput_open())
+		return 1;
+	fprintf(stderr, "serving touch events\n");
+	for (;;) {
+		if (pin_get(PIN_ATN) != atn_active_level) {
+			/* 1 ms while a gesture is live, 4 ms when idle. */
+			struct timespec ts = { 0, active ? 1000000 : 4000000 };
+
+			if (active && now_us() - last_frame > 250000)
+				active = 0;
+			nanosleep(&ts, NULL);
+			continue;
+		}
+		int n = read_frame_contacts(c, 16);
+
+		if (n < 0) {
+			if (++errors > 50) {
+				fprintf(stderr, "too many frame errors, rebooting controller\n");
+				power(0);
+				usleep(500000);
+				if (boot(fw, cal))
+					return 1;
+				errors = 0;
+			}
+			continue;
+		}
+		errors = 0;
+		last_frame = now_us();
+		active = 1;
+		report(c, n);
+	}
+}
+
 static void regs(void)
 {
 	printf("spi1 ctrl %08x cfg %08x status %08x pin %08x clkdiv %08x\n",
@@ -780,6 +1074,7 @@ static void regs(void)
 
 int main(int argc, char **argv)
 {
+	setvbuf(stdout, NULL, _IOLBF, 0);
 	if (argc < 2)
 		return 2;
 	if (getenv("Z2_VERBOSE"))
@@ -958,6 +1253,8 @@ int main(int argc, char **argv)
 				printf(" %02x", rx[i]);
 			printf("  atn %d\n", pin_get(PIN_ATN));
 		}
+	} else if (!strcmp(argv[1], "serve") && argc > 2) {
+		return serve(argv[2], argc > 3 ? argv[3] : NULL);
 	} else if (!strcmp(argv[1], "run") && argc > 2) {
 		pin_out(PIN_CS, 1);
 		if (boot(argv[2], argc > 3 ? argv[3] : NULL))
@@ -965,6 +1262,8 @@ int main(int argc, char **argv)
 		for (;;) {
 			if (wait_atn(1000000))
 				read_frame();
+			else
+				printf("idle atn=%d\n", pin_get(PIN_ATN));
 		}
 	} else {
 		return 2;

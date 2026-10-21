@@ -352,6 +352,7 @@ def boot(run, record):
         raise StageFailed(f'No automatic route from mode {mode}')
     boot_id = restore_identity(run)
     deploy_display(run)
+    deploy_touch(run)
     return boot_id
 
 
@@ -367,6 +368,26 @@ def deploy_display(run):
                     capture_output=True, timeout=300)
     log(run, 'display_deployed' if result.returncode == 0 else 'display_failed',
         returncode=result.returncode)
+
+
+TOUCH_FIRMWARE = PRIVATE / 'touch/n90-z2-0x0098.bin'
+
+
+def deploy_touch(run):
+    """Start the physical touch driver (kernel/n90-touch). Not a boot failure."""
+    binary = ROOT / 'output/touch/n90-touch'
+    if not binary.exists() or not TOUCH_FIRMWARE.exists():
+        log(run, 'touch_skipped', reason='no n90-touch build or firmware')
+        return
+    args = [sys.executable, str(ROOT / 'kernel/n90-touch/deploy.py'),
+            '--ssh-config', str(SSH_CONFIG), '--host', 'iphone4-usb',
+            '--binary', str(binary), '--firmware', str(TOUCH_FIRMWARE)]
+    module = ROOT / 'output/touch/uinput.ko'
+    if module.exists():
+        args += ['--uinput-ko', str(module)]
+    result = sp.run(args, capture_output=True, timeout=120)
+    log(run, 'touch_started' if result.returncode == 0 else 'touch_failed',
+        returncode=result.returncode, detail=result.stderr.decode()[-300:])
 
 
 def main():
