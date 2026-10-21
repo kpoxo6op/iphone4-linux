@@ -160,6 +160,8 @@ def inside(a):
         checks['tailscale_fallback_publishes'] = (
             r.returncode == 0 and 'over Tailscale' in r.stdout and
             manifest()['scenes_revision'] == head())
+        checks['sync_recorded_for_watcher'] = (
+            (library / '.git/soy-synced').read_text().strip() == head())
         r = scene('show', 'note')
         checks['show'] = r.returncode == 0 and wait(lambda s: s['scene'] == 'note') and \
             (library / '.git/soy-focus').read_text().strip() == 'note'

@@ -345,6 +345,9 @@ def sync(library, phone, receipt=None, show=None):
     else:
         release = full_deploy(phone, files, library.head(), focus, receipt)
         summary = f'Installed the renderer with {len(ids)} scenes over {via} ({release}).'
+    # The watcher compares this with the library to catch up a phone that
+    # was away when scenes were published.
+    (library.path / '.git/soy-synced').write_text(library.head() + '\n')
     if show:
         phone.command('goto ' + show)
         deadline = time.monotonic() + 5

@@ -125,8 +125,9 @@ renderer reloads. The previous release stays as `/opt/soy/previous`. The tool
 tries USB first, then Tailscale.
 
 When the phone is out of reach, the change is still saved (exit code 3). The
-next `put`, `publish` or `sync` brings it over, and every boot installs the
-library's last saved scenes. If those fail on the phone, the boot falls back to
+phone watcher on the laptop notices when the phone is back on USB and syncs it
+within about 30 seconds; any later `put`, `publish` or `sync` also brings it
+over, and every boot installs the library's last saved scenes. If those fail on the phone, the boot falls back to
 the default scenes so the screen is never empty.
 
 ## Before calling a scene done
