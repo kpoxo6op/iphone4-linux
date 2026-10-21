@@ -113,7 +113,9 @@ reach.
 ## Where scenes live
 
 The library is a private Git repository at `.runtime/phone/private/scenes`,
-outside the public repository. It starts as a copy of the default scenes in
+outside the public repository. Run `scene.py` from the checkout that boots the
+phone, which holds that directory and the SSH configuration; elsewhere it
+refuses rather than start a second library. It starts as a copy of the default scenes in
 `soy/scenes`. `git -C .runtime/phone/private/scenes log` is the history of
 everything shown on the phone.
 

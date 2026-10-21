@@ -466,6 +466,9 @@ def main():
     sync_cmd.add_argument('--receipt', type=Path)
     a = parser.parse_args()
     os.umask(0o077)
+    if a.library == PRIVATE / 'scenes' and not PRIVATE.is_dir():
+        raise Failure(f'{ROOT} has no phone state ({PRIVATE}). Run scene.py from the '
+                      'checkout that boots the phone, or pass --library and --ssh-config')
     library = Library(a.library).open()
     phone = Phone(a.ssh_config, a.host, a.binary)
 
