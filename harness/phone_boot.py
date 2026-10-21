@@ -241,10 +241,36 @@ def link_is_pinned():
     return '/usb3/3-4/' in str(device) + '/'
 
 
+def claim_usb_address(run):
+    """Give the phone 10.84.4.2 when DHCP handed it a spare address.
+
+    NetworkManager keeps a lease for the previous boot's gadget MAC. A reboot
+    releases it, but a reset (watchdog, panic, freeze) does not, so the new
+    boot is offered the spare 10.84.4.3 until that lease ends. On the pinned
+    link only, add the expected address next to it over a first-contact
+    connection, as the fresh-boot identity step already does.
+    """
+    for spare in SPARE_USB_ADDRESSES:
+        if not port_open(spare):
+            continue
+        with tempfile.TemporaryDirectory() as temporary:
+            fresh = Path(temporary) / 'known_hosts'
+            args = ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8',
+                    '-o', f'UserKnownHostsFile={fresh}', '-o', 'StrictHostKeyChecking=accept-new',
+                    '-i', str(PRIVATE / 'ssh_ed25519'), f'root@{spare}',
+                    "tr -d '\\000' < /proc/device-tree/model; "
+                    'ip addr add 10.84.4.2/24 dev usb0 2>/dev/null; true']
+            result = sp.run(args, capture_output=True, timeout=30)
+        if result.returncode == 0 and result.stdout.decode().startswith('Apple iPhone 4'):
+            log(run, 'usb_address_claimed', spare=spare)
+            return True
+    return False
+
+
 def restore_identity(run):
     """Install the saved host key, Tailscale state and host time on a fresh boot."""
     deadline = time.monotonic() + 180
-    while not (link_is_pinned() and ssh_port_open()):
+    while not (link_is_pinned() and (ssh_port_open() or claim_usb_address(run))):
         if time.monotonic() > deadline:
             raise StageFailed('USB SSH did not come up on the pinned link')
         time.sleep(3)
@@ -296,13 +322,20 @@ def restore_identity(run):
     raise StageFailed('Phone did not reach the tailnet with its saved identity')
 
 
-def ssh_port_open():
+SPARE_USB_ADDRESSES = ('10.84.4.3',)
+
+
+def port_open(address):
     import socket
     try:
-        with socket.create_connection(('10.84.4.2', 22), timeout=3):
+        with socket.create_connection((address, 22), timeout=3):
             return True
     except OSError:
         return False
+
+
+def ssh_port_open():
+    return port_open('10.84.4.2')
 
 
 def choose_kernel(run, record):
@@ -353,6 +386,7 @@ def boot(run, record):
     if mode != 'linux_usb':
         raise StageFailed(f'No automatic route from mode {mode}')
     boot_id = restore_identity(run)
+    deploy_watchdog(run)
     deploy_display(run)
     deploy_touch(run)
     return boot_id
@@ -370,6 +404,26 @@ def deploy_display(run):
                     capture_output=True, timeout=300)
     log(run, 'display_deployed' if result.returncode == 0 else 'display_failed',
         returncode=result.returncode)
+
+
+def deploy_watchdog(run):
+    """Arm the SoC watchdog (kernel/n90-watchdog) so a frozen kernel resets.
+
+    A reset lands in DFU, where the watcher starts the next pass. Not a boot
+    failure if it cannot start.
+    """
+    binary = ROOT / 'output/watchdog/n90-wdt'
+    if not binary.exists():
+        log(run, 'watchdog_skipped', reason='no n90-wdt build')
+        return
+    sent = ssh('iphone4-usb', 'killall n90-wdt 2>/dev/null; sleep 1; '
+               'cat > /usr/sbin/n90-wdt.new && chmod 755 /usr/sbin/n90-wdt.new && '
+               'mv /usr/sbin/n90-wdt.new /usr/sbin/n90-wdt',
+               stdin=binary.read_bytes())
+    started = sent.returncode == 0 and ssh(
+        'iphone4-usb', 'nohup /usr/sbin/n90-wdt 60 10 >/run/n90-wdt.log 2>&1 </dev/null & '
+        'sleep 1; pidof n90-wdt').returncode == 0
+    log(run, 'watchdog_armed' if started else 'watchdog_failed')
 
 
 TOUCH_FIRMWARE = PRIVATE / 'touch/n90-z2-0x0098.bin'
