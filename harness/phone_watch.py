@@ -123,7 +123,10 @@ def start_boot(value):
             (value['status'] == 'linux_usb' and waiting_ssh)):
         return
     record = DATA / 'private/boot.json'
-    if record.exists() and json.loads(record.read_text()).get('failures', 0) >= 3:
+    # After three failed passes, wait until the phone is reset into DFU; the
+    # pass then starts over (phone_boot.py clears the count in DFU).
+    if (record.exists() and json.loads(record.read_text()).get('failures', 0) >= 3
+            and value['status'] != 'dfu'):
         return
     # The unit holds the USB-operation lock; a running pass ignores this start.
     sp.run(['systemctl', '--user', 'start', '--no-block', 'iphone4-linux-boot.service'],
