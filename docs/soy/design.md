@@ -8,6 +8,20 @@ The [design foundations](foundations.md) explain the researched principles,
 their application and the checks required for new work. This document records
 the current product choices.
 
+## AI draws SoyOS
+
+The owner set this on 21 October 2026. AI draws the whole design, and AI can
+change it fluidly at any time. That covers the scenes, the layout and the visual
+language. SoyOS has no apps beyond ordinary Linux tooling. Its main product is
+scenes that an LLM creates for the person who asks for them. People say what
+they want to see and experience. They do not install, configure or maintain
+anything.
+
+How this will work technically is an open question. The scene bundles and
+runtime below are the current first step, not a decided architecture. Record
+new mechanisms here once they are actually chosen, and don't present an
+unbuilt one as settled.
+
 ## The feel
 
 Dark, quiet, legible. Warm white text, a little phosphor green, generous space.
