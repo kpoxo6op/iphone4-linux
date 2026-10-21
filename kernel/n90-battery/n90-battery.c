@@ -9,8 +9,16 @@
  * 12-bit result in 0x31 (low nibble) and 0x32 (high byte). The channel names
  * come from AppleD1815PMU's sensor table in the iOS 7.1.2 kernelcache:
  * 0 vcc_main, 1 ich, 2 tbat, 4 vbat, 5 ibat, 7 adc_in7, 11-14 tdev1-4,
- * 15 vbus. The scale of each channel is not known yet: `probe` prints raw
- * values so they can be matched against a meter or the gas gauge.
+ * 15 vbus. VBAT is 2500 mV + counts x 2000/4096: two readings on 21 and 22
+ * October matched iBoot's own boot-time record in 0x8e:0x8d within 14 mV.
+ * The other scales are not known yet; `probe` prints raw values.
+ *
+ * Charging: register 0x08 bit 5 means the charge timer ran out and bit 3
+ * that charging ended; ich (channel 1) reads 0 then. AppleD1815PMUPowerSource
+ * restarts the charger by writing 0x2e & 0x08 to 0x2e and then the old value
+ * (iOS 7.1.2 kernelcache 0x8098cfb0), five minutes after a timeout or when
+ * the battery is below 95 %. On 22 October the timer had expired, the phone
+ * drained on USB, and that write brought ich from 0 to about 1275 counts.
  *
  * The USB input current limit is register 0x2b: bits 0-4 a code, bit 7 set
  * when software chose it. AppleD1815PMUPowerSource writes code | 0x80 and
@@ -24,11 +32,9 @@
  *   serve [dir]      publish readings every 10 s as power_supply-style
  *                    files under dir (default /run/power_supply)
  *
- * serve needs N90_VBAT_UV_PER_COUNT (microvolts per count, from probe) and
- * optionally N90_VBAT_OFFSET_UV, and N90_ICH_CHARGING_COUNTS for the charge
- * current above which the battery counts as charging. Without them it
- * publishes the supply and raw counts only, never an invented voltage,
- * percentage or charge state.
+ * serve restarts the charger the same way, publishes the voltage and the
+ * charge state, and publishes a percentage estimated from the voltage only
+ * on battery: while charging the voltage reads high.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -46,7 +52,11 @@
 #define PMU_ADDR        0x74
 #define PMU_EVENT       0x02
 #define PMU_SUPPLY      0x07
+#define PMU_CHARGE      0x08
 #define PMU_USB_LIMIT   0x2b
+#define PMU_CHARGER     0x2e
+#define CHARGE_TIMEOUT  0x20
+#define CHARGE_END      0x08
 #define PMU_ADC_MUX     0x30
 #define PMU_ADC_LOW     0x31
 #define PMU_SUPPLY_USB  0x08
@@ -228,15 +238,28 @@ static int percent(long mv)
 	return 100;
 }
 
+static long vbat_mv(int counts)
+{
+	return 2500 + counts * 2000L / 4096;
+}
+
+/* What AppleD1815PMUPowerSource does after a charge timeout or end of charge
+ * with the battery below 95 %: clear the charger configuration but bit 3 and
+ * write it back, which starts a new charge cycle. */
+static int restart_charger(void)
+{
+	int v = pmu_read(PMU_CHARGER);
+
+	if (v < 0 || pmu_write(PMU_CHARGER, v & 0x08))
+		return -1;
+	usleep(100000);
+	return pmu_write(PMU_CHARGER, v);
+}
+
 static void serve(const char *root)
 {
-	char battery[200], usb[200];
-	const char *scale = getenv("N90_VBAT_UV_PER_COUNT");
-	const char *offset = getenv("N90_VBAT_OFFSET_UV");
-	const char *charging = getenv("N90_ICH_CHARGING_COUNTS");
-	long uv_per_count = scale ? atol(scale) : 0;
-	long offset_uv = offset ? atol(offset) : 0;
-	long ich_min = charging ? atol(charging) : -1;
+	char battery[200], usb[200], path[256];
+	time_t stopped = 0, restarted = 0;
 
 	snprintf(battery, sizeof battery, "%s/battery", root);
 	snprintf(usb, sizeof usb, "%s/usb", root);
@@ -245,24 +268,49 @@ static void serve(const char *root)
 	mkdir(usb, 0755);
 	put(battery, "type", "Battery\n", 0);
 	put(usb, "type", "USB\n", 0);
+	snprintf(path, sizeof path, "%s/capacity_source", battery);
+	unlink(path);
 	for (;;) {
-		int supply = pmu_read(PMU_SUPPLY), vbat = adc(ADC_VBAT);
-		int ich = adc(ADC_ICH), online = supply >= 0 && (supply & PMU_SUPPLY_USB);
+		int supply = pmu_read(PMU_SUPPLY), charge = pmu_read(PMU_CHARGE);
+		int vbat = adc(ADC_VBAT), ich = adc(ADC_ICH);
+		int online = supply >= 0 && (supply & PMU_SUPPLY_USB);
+		int charging = online && ich > 50;
+		time_t now = time(NULL);
+		long mv = vbat > 0 ? vbat_mv(vbat) : -1;
 
+		if (online && charge >= 0 && (charge & (CHARGE_TIMEOUT | CHARGE_END)) &&
+		    mv > 0 && mv < 4100) {
+			if (!stopped)
+				stopped = now;
+			/* iOS waits five minutes after a timeout before restarting. */
+			if ((!(charge & CHARGE_TIMEOUT) || now - stopped >= 300) &&
+			    now - restarted >= 300 && !restart_charger()) {
+				fprintf(stderr, "charger restarted (0x08 = 0x%02x, %ld mV)\n",
+					charge, mv);
+				restarted = now;
+				stopped = 0;
+			}
+		} else {
+			stopped = 0;
+		}
 		put(usb, "online", "%ld\n", online);
 		put(battery, "vbat_counts", "%ld\n", vbat);
 		put(battery, "ich_counts", "%ld\n", ich);
-		if (uv_per_count && vbat > 0) {
-			long uv = offset_uv + vbat * uv_per_count;
-
-			put(battery, "voltage_now", "%ld\n", uv);
-			put(battery, "capacity", "%ld\n", percent(uv / 1000));
+		put(battery, "charge_flags", "0x%02lx\n", charge);
+		if (mv > 0)
+			put(battery, "voltage_now", "%ld\n", mv * 1000);
+		snprintf(path, sizeof path, "%s/capacity", battery);
+		if (mv > 0 && !online) {
+			put(battery, "capacity", "%ld\n", percent(mv));
 			put(battery, "capacity_source", "voltage\n", 0);
+		} else {
+			unlink(path);
 		}
 		put(battery, "status", supply < 0 ? "Unknown\n" :
 		    !online ? "Discharging\n" :
-		    ich_min < 0 || ich < 0 ? "Unknown\n" :
-		    ich > ich_min ? "Charging\n" : "Not charging\n", 0);
+		    charging ? "Charging\n" :
+		    charge >= 0 && (charge & CHARGE_END) && mv >= 4100 ? "Full\n" :
+		    "Not charging\n", 0);
 		sleep(10);
 	}
 }
