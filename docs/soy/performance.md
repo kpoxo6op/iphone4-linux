@@ -69,6 +69,46 @@ Source references: pinned kernel `drivers/gpu/drm/sysfb/simpledrm.c`,
 [LVGL source](https://github.com/lvgl/lvgl/tree/80ca777e37a2b176770726a02e07a6fb79ef0b39);
 [Pixman](https://gitlab.freedesktop.org/pixman/pixman/-/tree/pixman-0.46.4).
 
+## Real touch, lean kernel and NEON scanout — 22 October 2026
+
+Physical touch now arrives from the N1 controller (`kernel/n90-touch`) at
+62.5 Hz. Boris called the first swipes laggy. Measured causes and fixes:
+
+1. **Display copy.** simpledrm's `DIRTYFB` copied a full frame in 9.5 ms.
+   Soy now copies damage itself with 128-bit NEON stores into a
+   write-combined `/dev/mem` mapping of the scanout buffer (from
+   `/proc/iomem`): 3.3–4 ms. `SOY_SCANOUT=dirtyfb` restores the kernel copy.
+2. **Debug kernel.** Lockdep, lock debugging and the function tracer made
+   syscalls 10–50× slower (sysfs read 1.4 ms), so telemetry stalled frames
+   by 10–20 ms. The lean kernel (`kernel/n90-display-power/lean.config`) also
+   registers a 24 MHz `sched_clock` and runs HZ 1000.
+3. **Preemption.** Soy runs `SCHED_FIFO` 10 and the touch driver FIFO 20, so
+   tailscaled bursts and telemetry readers no longer interrupt a frame.
+4. **Animation pacing.** While an animation runs, Soy steps it and draws again
+   at once instead of waiting for the next 8 ms tick.
+
+`check_frames.py --host iphone4-usb` (the replay runs at FIFO 20, like the
+touch driver; tailnet SSH adds WireGuard work that real use does not have).
+Lean kernel `e899dceb`, Soy `prototype-613489419040`:
+
+| Surface | Average fps | p95 | p99 | Worst | Misses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reading | 106.2 | 10.5 ms | 11.0 ms | 12.3 ms | 0 / 1096 |
+| Pages | 85.5 | 13.0 ms | 14.8 ms | 19.6 ms | 1 / 891 |
+| Pinch in | 83.9 | 13.4 ms | 14.2 ms | 22.4 ms | 1 / 865 |
+| Pinch out | 95.8 | 12.9 ms | 14.1 ms | 22.2 ms | 1 / 987 |
+| Top sheet | 120.7 | 8.7 ms | 9.9 ms | 33.1 ms | 2 / 1242 |
+| Bottom sheet | 113.8 | 10.0 ms | 10.9 ms | 29.2 ms | 2 / 1169 |
+
+Before these changes the same pages run averaged 52.8 fps with 577 misses.
+**Five of six surfaces still miss the release gate** by one or two frames:
+the frame that settles the view after release (8–13 ms idle wait plus a
+12–17 ms full redraw), and the first frame of a cold sheet (25 ms of
+construction). Pages and pinch render in ~11 ms including the 4 ms copy, so
+there is little headroom. Next: prepare sheets at rest, avoid the full-view
+rebuild at the end of a gesture, and move the touch driver into the kernel
+with the ATN interrupt instead of polling.
+
 ## Latest phone measurement — still fails
 
 21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary

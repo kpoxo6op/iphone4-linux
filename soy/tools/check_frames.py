@@ -20,6 +20,11 @@ p.add_argument("--ssh-config", type=Path, required=True)
 p.add_argument("--replay", type=Path, required=True)
 p.add_argument("--out", type=Path, required=True)
 p.add_argument(
+    "--host",
+    default="iphone4",
+    help="SSH host; iphone4-usb keeps tailnet crypto out of the measurement",
+)
+p.add_argument(
     "--surface",
     choices=["reading", "pages", "pinch", "pinch-out", "sheet", "bottom-sheet"],
     required=True,
@@ -34,7 +39,7 @@ ssh = [
     "BatchMode=yes",
     "-o",
     "ConnectTimeout=10",
-    "iphone4",
+    a.host,
 ]
 
 
@@ -120,7 +125,9 @@ commands += ["frame", "wait 800", "sample", "quit"]
 stream = "\n".join(commands) + "\n"
 (a.out / "contacts.txt").write_text(stream)
 r = sp.run(
-    ssh + ["/run/soy/touch-replay"],
+    # Same priority as the physical touch driver (n90-touch, SCHED_FIFO 20),
+    # so contacts arrive on time while Soy itself runs at FIFO 10.
+    ssh + ["chrt -f 20 /run/soy/touch-replay"],
     input=stream.encode(),
     capture_output=True,
     timeout=40,

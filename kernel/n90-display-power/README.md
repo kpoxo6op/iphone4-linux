@@ -52,3 +52,25 @@ $O/scripts/dtc/dtc -I dts -O dtb -o n90-backlight.dtb n90-boot-display-power.dts
 The toolchain is the Buildroot `armv7-eabihf--glibc--stable-2025.08-1` (GCC
 14.3.0) that built the knownboot zImage. `CONFIG_TUN=y` makes the kernel
 independent of the initramfs's `tun.ko`.
+
+## Lean build, 22 October 2026
+
+Same tree and patches plus `0003-clocksource-s5l8930-sched-clock.patch`, with
+`lean.config` applied to the backlight `.config` before `olddefconfig`.
+The knownboot configuration had lockdep, lock debugging and the function
+tracer on. On the phone a `getppid` took 13 µs and reading one sysfs file
+1.4 ms; Soy's network telemetry alone took 12 ms, which stalled frames.
+
+The timer driver registered no `sched_clock`, so the scheduler accounted time
+in 10 ms jiffies. Patch 0003 registers the 24 MHz counter.
+
+| | Backlight kernel `497fa0e4` | Lean kernel `e899dceb` |
+|---|---:|---:|
+| `getppid` | 13.1 µs | 0.79 µs |
+| open/read/close sysfs | 1413 µs | 129 µs |
+| Soy network telemetry | 11.8 ms | 2.2 ms |
+| sched_clock | 100 Hz jiffies | 24 MHz, 41 ns |
+
+It booted through `harness/phone_boot.py run --test-zimage` on 21 October
+12:13 UTC with the backlight DTB `9567afd1`, with USB and tailnet SSH, and runs
+the touch driver and Soy. uinput is built in.
