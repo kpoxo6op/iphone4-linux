@@ -234,14 +234,14 @@ static void add_span(lv_obj_t *o, const char *s, int font, uint32_t ink,
   lv_style_set_text_color(style, color(ink));
 }
 static void markdown(lv_obj_t *o, const char *s, int font, uint32_t ink,
-                     uint32_t accent, int code) {
+                     uint32_t accent, int code, int bold) {
   /* Preserve the small, safe Markdown dialect. URLs are text, never commands.
    */
   char *part = malloc(strlen(s) + 1);
   if (!part)
     return;
   size_t n = 0;
-  int bold = 0, em = 0, link = 0, mono = code;
+  int em = 0, link = 0, mono = code;
   while (*s) {
     int step = 0, kind = 0;
     if (!code && s[0] == '*' && s[1] == '*') {
@@ -424,7 +424,7 @@ static void build_body(int index) {
     else {
       expand(raw, expanded, len + 2048);
       char *txt = expanded;
-      int font = body_faces[v->zoom], indent = 0;
+      int font = body_faces[v->zoom], indent = 0, strong = 0;
       uint32_t ink = INK;
       if (!code && *txt == '#') {
         int level = 0;
@@ -435,6 +435,7 @@ static void build_body(int index) {
         if (*txt == ' ')
           txt++;
         font = level == 1 ? (s->hero && first ? 3 : 2) : body_faces[v->zoom];
+        strong = level > 1; /* Subheadings stay body size, set apart by weight. */
         ink = s->hero && level == 1 ? s->accent : INK;
         y += first ? 0 : 12;
         first = 0;
@@ -451,9 +452,9 @@ static void build_body(int index) {
         lv_obj_set_style_bg_color(rule, color(s->accent), 0);
         lv_obj_set_clickable(rule, false);
       } else if (!code && (*txt == '-' || *txt == '*') && txt[1] == ' ') {
-        label(v->body, "·", font, s->accent, 34, y, 24);
+        label(v->body, "•", font, s->accent, 34, y, 24);
         txt += 2;
-        indent = 24;
+        indent = 34;
       }
       lv_obj_t *o = lv_spangroup_create(v->body);
       lv_obj_set_pos(o, 34 + indent, y);
@@ -468,7 +469,7 @@ static void build_body(int index) {
         lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
         ink = s->accent;
       }
-      markdown(o, txt, font, ink, s->accent, code);
+      markdown(o, txt, font, ink, s->accent, code, strong);
       lv_obj_update_layout(o);
       int height = lv_obj_get_height(o);
       /* LVGL snapshots cache immutable paragraphs. Software text layout and

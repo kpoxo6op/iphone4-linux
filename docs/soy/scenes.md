@@ -50,7 +50,7 @@ paragraph on a single line**. Lines wrap at word boundaries on screen.
 | Write | Get |
 | --- | --- |
 | `# Heading` | 48 px heading (19 characters a line) |
-| `## Heading`, `###` … | a body-size line with a little space above |
+| `## Heading`, `###` … | a bold body-size line with a little space above |
 | plain text | 36 px body text, about 26 characters a line |
 | blank line | 20 px of space |
 | `**bold**` | bold |
