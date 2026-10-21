@@ -21,6 +21,7 @@ import json
 import os
 from pathlib import Path
 import subprocess as sp
+import sys
 import tempfile
 import time
 
@@ -45,6 +46,9 @@ KIT_SHA256 = {
     'openiboot.bin': '29d65d295aae4ce2318d30756e427dd9f177daf05280eaeafa7670cea6e22cb2',
     'loadibec-fixed': '944272832a88cfd5c7679c07e56abb610c6d6441826ba0c1eb792b7620181331',
     'oibc': '5083a208079bd93f7fa8e850ccc9625b95460f9ba9d32ccf963e3cb3e9221485',
+    # Local-only Apple iBSS and its payload; loadibec reads both from its cwd.
+    'iBSS.n90ap': 'fe45bf803a01277936c77276037c583022d180a4056d7a5a28b03a3fcd58a849',
+    'iBSS.n90ap.payload': 'a8e1fe0039a72668a301160837a0e8d703544f454a0a11736a6ed9386fca5f9f',
 }
 UPLOADS = [('zImage', '0x01000000'), ('n90-boot.dtb', '0x0c000000'),
            ('ramboot.bin', '0x0c100000'), ('initramfs', '0x0d000000')]
@@ -149,6 +153,10 @@ def dfu_from_recovery(run):
 
 
 def dfu_to_openiboot(run):
+    # Without iBSS in its working directory the loader tries Apple's servers,
+    # then sends openiBoot straight to DFU, which fails.
+    for name in ('iBSS.n90ap', 'iBSS.n90ap.payload'):
+        (run / name).write_bytes((KIT / name).read_bytes())
     log(run, 'loader_start')
     loader = pinned_usb(run, [str(KIT / 'loadibec-fixed'), str(KIT / 'openiboot.bin')])
     try:
@@ -302,7 +310,23 @@ def boot(run):
         mode = 'linux_usb'
     if mode != 'linux_usb':
         raise StageFailed(f'No automatic route from mode {mode}')
-    return restore_identity(run)
+    boot_id = restore_identity(run)
+    deploy_display(run)
+    return boot_id
+
+
+def deploy_display(run):
+    """RAM boots lose Soy; reinstall the current build. Not a boot failure."""
+    binary = ROOT / 'output/soy/lvgl-armv7/soy'
+    if not binary.exists():
+        log(run, 'display_skipped', reason='no ARM Soy build')
+        return
+    result = sp.run([sys.executable, str(ROOT / 'soy/tools/deploy.py'),
+                     '--ssh-config', str(SSH_CONFIG), '--host', 'iphone4-usb',
+                     '--binary', str(binary), '--receipt', str(run / 'soy-deploy.json')],
+                    capture_output=True, timeout=300)
+    log(run, 'display_deployed' if result.returncode == 0 else 'display_failed',
+        returncode=result.returncode)
 
 
 def main():
