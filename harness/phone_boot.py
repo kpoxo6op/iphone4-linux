@@ -56,6 +56,14 @@ ENTRY = '0x0c100000'
 MAX_FAILURES = 3
 # Test boots only: replace a knownboot upload with another file for one pass.
 OVERRIDES = {}
+# Preferred kernel: knownboot plus the N90 display-power drivers
+# (kernel/n90-display-power). After a failed pass with it, the next pass
+# boots plain knownboot; a successful backlight boot clears that.
+BACKLIGHT = PRIVATE / 'backlight-20261021'
+BACKLIGHT_SHA256 = {
+    'zImage': '497fa0e4fa0b0c673c7e68cd06bf4b598564893d56f150851c9320ee92b44e7f',
+    'n90-boot.dtb': '9567afd1d6328a3fac8a3372a3019a7a01195fc8c44d1062cd81fba0a3ff2754',
+}
 
 
 class StageFailed(Exception):
@@ -295,7 +303,26 @@ def ssh_port_open():
         return False
 
 
-def boot(run):
+def choose_kernel(run, record):
+    if OVERRIDES:
+        return 'test'
+    if record.get('backlight_failures', 0):
+        log(run, 'kernel', choice='knownboot', reason='backlight kernel failed last pass')
+        return 'knownboot'
+    for name, expected in BACKLIGHT_SHA256.items():
+        path = BACKLIGHT / name
+        if not path.exists():
+            log(run, 'kernel', choice='knownboot', reason='backlight kernel absent')
+            return 'knownboot'
+        with path.open('rb') as stream:
+            if hashlib.file_digest(stream, 'sha256').hexdigest() != expected:
+                raise StageFailed(f'Backlight {name} does not match its hash')
+        OVERRIDES[name] = str(path)
+    log(run, 'kernel', choice='backlight')
+    return 'backlight'
+
+
+def boot(run, record):
     mode = observe()
     log(run, 'observed', mode=mode)
     if mode == 'no_device':
@@ -314,6 +341,7 @@ def boot(run):
         mode = 'dfu'
     if mode in ('dfu', 'openiboot'):
         verify_kit()
+        record['kernel'] = choose_kernel(run, record)
     if mode == 'dfu':
         dfu_to_openiboot(run)
         mode = 'openiboot'
@@ -357,7 +385,7 @@ def main():
         return
     record = json.loads(RECORD.read_text()) if RECORD.exists() else {}
     if args.command == 'reset-failures':
-        record['failures'] = 0
+        record.update(failures=0, backlight_failures=0)
         save_record(record)
         return
     if record.get('failures', 0) >= MAX_FAILURES:
@@ -371,14 +399,18 @@ def main():
         run = RUNS / datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')
         run.mkdir()
         try:
-            boot_id = boot(run)
+            boot_id = boot(run, record)
         except (StageFailed, OSError, sp.SubprocessError) as exc:
             log(run, 'failed', error=str(exc)[:300])
+            if record.get('kernel') == 'backlight':
+                record['backlight_failures'] = record.get('backlight_failures', 0) + 1
             record.update(failures=record.get('failures', 0) + 1, last_run=run.name,
                           last_result='failed', last_error=str(exc)[:300])
             save_record(record)
             raise SystemExit(1)
         record.pop('last_error', None)
+        if record.get('kernel') == 'backlight':
+            record['backlight_failures'] = 0
         record.update(failures=0, last_run=run.name, last_result='ready', boot_id=boot_id,
                       ready_at=datetime.now(timezone.utc).isoformat())
         save_record(record)
