@@ -1163,7 +1163,9 @@ static void cancel_motion(void) {
 }
 static void end_preview(int commit) {
   if (commit && pinch_index == current) {
-    /* Keep the preview until the same refresh can show the new layout. */
+    /* Keep the preview until the new layout replaces it: the main loop
+     * draws that in this same pass (apply_zoom after the refresh). Waiting
+     * for the next pass left up to 8 ms in poll() before a 12.5 ms frame. */
     zoom_pending = pinch_level;
     return;
   }
@@ -1176,6 +1178,12 @@ static void end_preview(int commit) {
     pinch_image = NULL; /* The reserved buffer stays for the next pinch. */
   }
   preview_scale = 1;
+}
+static void apply_zoom(void) {
+  int level = zoom_pending;
+  zoom_pending = -1;
+  resize_text(current, level, zoom_anchor);
+  end_preview(0);
 }
 static void set_backlight(int on) {
   glob_t g = {0};
@@ -1956,12 +1964,8 @@ int main(int argc, char **argv) {
     }
     if (close_pending)
       close_sheet();
-    if (zoom_pending >= 0) {
-      int level = zoom_pending;
-      zoom_pending = -1;
-      resize_text(current, level, zoom_anchor);
-      end_preview(0);
-    }
+    if (zoom_pending >= 0)
+      apply_zoom();
     if (reloading || reload_requested) {
       reloading = reload_requested = 0;
       end_preview(0);
@@ -1998,6 +2002,12 @@ int main(int argc, char **argv) {
        * end). Close it in this pass, not after the next poll. */
       if (close_pending) {
         close_sheet();
+        lv_refr_now(display);
+      }
+      /* A pinch released in this pass: draw the new layout now, right behind
+       * the last pinch frame, not after the next poll. */
+      if (zoom_pending >= 0) {
+        apply_zoom();
         lv_refr_now(display);
       }
       if (idle_seconds && !contacts_active &&
