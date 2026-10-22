@@ -33,6 +33,22 @@ boots it again. On battery a damaged phone that still shows pages is more use
 than one waiting in DFU mode, so it keeps running. `/run/keep/hold-oops`
 pauses the restart, for driver experiments.
 
+## The USB link
+
+The phone's USB controller does not notice the cable going. Unplugged on 22
+October, it still reported a configured link; plugged back into the laptop
+an hour later it never connected again, and only a hard reset brought USB
+back. keep now watches `/run/power_supply/usb/online` (the battery reader's
+VBUS reading) and the controller's state in `/sys/class/udc/*/state`. When
+USB power comes back, or the link stays down while USB power is there, it
+disconnects and reconnects the link through `/sys/class/udc/*/soft_connect`:
+after 16 s, then 32 s, then about once a minute, as on a plain charger where
+no computer ever answers. The laptop's side, NetworkManager's
+`iphone4-linux-usb`, comes back by itself.
+
+On the phone: with the link disconnected by hand, keep reconnected it 16 s
+later, the controller reached `configured` again and SSH over USB worked.
+
 ## Holds
 
 Tools that stop a service on purpose write an expiry time (epoch seconds) to

@@ -16,6 +16,14 @@
 # the laptop boots it again from DFU mode. On battery a damaged phone that
 # still shows pages is more use than one waiting in DFU mode.
 # /run/keep/hold-oops pauses this.
+#
+# keep also mends the USB link. The phone's USB controller does not see the
+# cable go: unplugged, it still reported a configured link, and plugged back
+# into the laptop it never connected again (22 October, until a hard reset).
+# When the PMU sees USB power return, or the link stays down while USB power
+# is there, keep disconnects and reconnects it in software
+# (/sys/class/udc/*/soft_connect): after 16 s, then 32, then about once a
+# minute, as on a plain charger where no computer ever answers.
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 LOG=/run/keep/keep.log
 mkdir -p /run/keep
@@ -134,6 +142,39 @@ check_oops() {
 	fi
 }
 
+usb_reconnect() {
+	for f in /sys/class/udc/*/soft_connect; do
+		[ -e "$f" ] || continue
+		echo disconnect > "$f"
+		sleep 1
+		echo connect > "$f"
+	done
+	say "reconnected the USB link ($1)"
+}
+
+usb_was= usb_down=0 usb_wait=16
+check_usb() {
+	u=; read -r u 2>/dev/null < /run/power_supply/usb/online
+	st=
+	for f in /sys/class/udc/*/state; do
+		[ -e "$f" ] && read -r st 2>/dev/null < "$f"
+	done
+	if [ "$u" = 1 ] && [ "$usb_was" = 0 ]; then
+		usb_reconnect "USB power came back"
+		usb_down=0 usb_wait=16
+	elif [ "$u" = 1 ] && [ -n "$st" ] && [ "$st" != configured ]; then
+		usb_down=$((usb_down + 2))
+		if [ "$usb_down" -ge "$usb_wait" ]; then
+			usb_reconnect "link $st with USB power"
+			usb_down=0
+			[ "$usb_wait" -lt 60 ] && usb_wait=$((usb_wait * 2))
+		fi
+	else
+		usb_down=0 usb_wait=16
+	fi
+	[ -n "$u" ] && usb_was=$u
+}
+
 comm_soy=soy comm_touch=n90-touch comm_battery=n90-battery comm_wdt=n90-wdt
 comm_wifi=n90-wifi-keep
 
@@ -155,5 +196,6 @@ while :; do
 		eval "missing_$s=\$m"
 	done
 	check_oops
+	check_usb
 	sleep 2
 done
