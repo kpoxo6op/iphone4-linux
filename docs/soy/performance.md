@@ -150,6 +150,41 @@ release (a 17 ms full redraw). Pinch misses are the release frame (the release
 arrives 8 ms after the last move, then the new layout draws in 12 ms) and
 occasional preview frames at 14–15 ms.
 
+## Afternoon of 22 October 2026: sheets pass
+
+Three changes, measured with `check_frames.py --host iphone4-usb` on the lean
+kernel with keep, the battery reader and the laptop's log follower running:
+
+1. **Edge-pulled sheets follow from the first pixel.** LVGL's 14 px scroll
+   threshold also stayed in its running total, so the first time a sheet came
+   back to closed under the finger and the finger turned round, the sheet sat
+   still for 14 px (33 ms). During an edge press the threshold is 1 px.
+2. **Closing a sheet restores the screen instead of redrawing it.** Soy keeps
+   the undimmed screen from when the sheet opened; if nothing under the sheet
+   changed, the close deletes the sheet without invalidating, copies those
+   pixels back and presents them (about 7 ms instead of a 17 ms full redraw),
+   in the same pass as the release that closed it.
+3. **No telemetry reads during motion.** One source every 0.2 s cost up to
+   7 ms and pushed motion frames past the gate; sources now wait while a
+   finger or an animation is moving something.
+
+| Surface | Average fps | p95 | p99 | Worst | Misses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reading | 105.5 | 10.7 ms | 11.2 ms | 12.4 ms | 0 / 1095 |
+| Pages | 82.6 | 13.5 ms | 14.7 ms | 16.0 ms | 0 / 856 |
+| Pinch in | 84.8 | 13.2 ms | 14.0 ms | 21.3 ms | 1 / 874 |
+| Pinch out | 96.6 | 12.8 ms | 13.8 ms | 21.4 ms | 1 / 994 |
+| Top sheet | 121.0 | 8.6 ms | 9.6 ms | 11.6 ms | 0 / 1245 |
+| Bottom sheet | 90.4 | 12.9 ms | 13.4 ms | 14.4 ms | 0 / 928 |
+
+**Pinch still misses one frame, at release.** The release arrives about 9 ms
+after the last preview frame and the new text size takes 12 ms to lay out,
+draw and transfer, so that frame completes 21 ms after the one before. A
+cheaper intermediate frame does not fit either: a preview frame alone takes
+8.5 ms. Passing needs the new layout ready before the fingers lift. Pages run
+close to the gate (worst 16.0 ms), and earlier runs the same afternoon
+missed 1–3 frames at 16.7–19 ms.
+
 ## Latest phone measurement — still fails
 
 21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary
