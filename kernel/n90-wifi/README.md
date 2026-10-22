@@ -69,10 +69,11 @@ Each step was found on the phone with the diagnostics patch.
 3. **Clean retries.** Only a reset of the whole block clears that state:
    bit 31 of its PMGR gate (`0xbf1010a0`, openiBoot `clock_gate_reset`). The
    glue pulses it at probe, so a reload no longer needs a phone restart.
-4. **Card interrupts.** With the host's SDIO interrupt off, sdhci's
-   `MMC_CAP2_SDIO_IRQ_NOTHREAD` also left the MMC core without its polling
-   thread, so brcmfmac never heard the firmware. The glue clears it and the
-   core polls every 10 ms.
+4. **Card interrupts.** The card interrupt works through the host: an idle
+   chip raised one interrupt in 10 s and scans completed on it. Polling
+   (`card_irq=0`) costs about 100 CMD52 a second, and only works because the
+   glue clears sdhci's `MMC_CAP2_SDIO_IRQ_NOTHREAD`, which otherwise left the
+   MMC core without its polling thread, so brcmfmac never heard the firmware.
 5. **Old firmware.** 4.221.54.30 rejects the scan dwell-time ioctls and
    frame bursting, lacks `per_chan_info`, and reports scan results as
    `wl_bss_info` version 108 (109 without the trailing SNR). brcmfmac treated

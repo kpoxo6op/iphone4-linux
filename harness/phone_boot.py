@@ -390,6 +390,7 @@ def boot(run, record):
     boot_id = restore_identity(run)
     deploy_watchdog(run)
     tune_scheduler(run)
+    deploy_dhcp_script(run)
     deploy_display(run)
     deploy_touch(run)
     deploy_battery(run)
@@ -533,6 +534,24 @@ def deploy_wifi(run):
                stdin=blob.getvalue(), timeout=120)
     log(run, 'wifi_installed' if sent.returncode == 0 else 'wifi_failed',
         networks=wifi_networks().count('\n'), detail=sent.stderr.decode()[-200:])
+
+
+def deploy_dhcp_script(run):
+    """A DHCP client script that leaves an unchanged lease alone
+    (kernel/n90-net/udhcpc.script).
+
+    The stock script rewrote the default route at every renewal, every
+    minute on USB, and tailscaled rebuilt its connections each time. The
+    running udhcpc picks the new file up at its next renewal. Not a boot
+    failure.
+    """
+    script = ROOT / 'kernel/n90-net/udhcpc.script'
+    sent = ssh('iphone4-usb', 'cat > /usr/share/udhcpc/default.script.new && '
+               'chmod 755 /usr/share/udhcpc/default.script.new && '
+               'mv /usr/share/udhcpc/default.script.new /usr/share/udhcpc/default.script',
+               stdin=script.read_bytes())
+    log(run, 'dhcp_script_installed' if sent.returncode == 0 else 'dhcp_script_failed',
+        detail=sent.stderr.decode()[-200:])
 
 
 def tune_scheduler(run):

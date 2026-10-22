@@ -29,7 +29,7 @@ diff -ruN a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
 diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 --- a/drivers/mmc/host/sdhci-s5l8930.c
 +++ b/drivers/mmc/host/sdhci-s5l8930.c
-@@ -0,0 +1,310 @@
+@@ -0,0 +1,311 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SDHCI glue for the Apple S5L8930 (A4) SDIO host, which carries the iPhone 4
@@ -66,13 +66,14 @@ diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 +MODULE_PARM_DESC(max_mhz, "Highest SDIO clock in MHz (default 25)");
 +
 +/*
-+ * Whether the card interrupt goes through the host. Off by default until it
-+ * is proven on the A4: the MMC core then polls the card's pending interrupts
-+ * every 10 ms, so a card interrupt the host cannot mask cannot storm.
++ * The card interrupt goes through the host. On the phone (22 October) an idle
++ * BCM4329 raised one interrupt in 10 s and scans completed on it. card_irq=0
++ * makes the MMC core poll the card's pending interrupts every 10 ms instead:
++ * about 100 CMD52 a second, a steady drain on the battery.
 + */
-+static bool card_irq;
++static bool card_irq = true;
 +module_param(card_irq, bool, 0444);
-+MODULE_PARM_DESC(card_irq, "Use the host's SDIO card interrupt instead of polling");
++MODULE_PARM_DESC(card_irq, "Use the host's SDIO card interrupt (default) instead of polling");
 +
 +/* Bring-up experiments with the data path. */
 +static bool single_block;
