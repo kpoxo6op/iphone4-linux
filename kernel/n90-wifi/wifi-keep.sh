@@ -83,7 +83,8 @@ while :; do
 	0)
 		say "$out"
 		journal joined
-		wait=20 ;;
+		wait=20
+		continue ;;	# get an address now
 	3)
 		[ $wait -lt 120 ] && wait=$((wait * 2)) ;;
 	*)

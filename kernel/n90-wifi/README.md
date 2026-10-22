@@ -78,6 +78,11 @@ Each step was found on the phone with the diagnostics patch.
    frame bursting, lacks `per_chan_info`, and reports scan results as
    `wl_bss_info` version 108 (109 without the trailing SNR). brcmfmac treated
    each of these as fatal.
+6. **Join events.** The firmware sends the join's `SET_SSID` and `PSK_SUP`
+   (keyed) events with bsscfg index 255. brcmfmac dropped them as invalid,
+   so a connect never finished and every later scan was refused
+   (`Connecting: status (3)`). The patch hands them to the one interface
+   and logs each (`event 46 status 6 reason 0: bsscfg 255, using 0`).
 
 ## Status
 
@@ -86,7 +91,8 @@ Each step was found on the phone with the diagnostics patch.
 | Firmware download | Under a second, then `wl0: Broadcom BCM4329 802.11 Wireless Controller 4.221.54.30` |
 | `wlan0` | Up; `n90-wifi features`: `psk_offload yes` |
 | Scan | 6 networks on channels 1, 6, 11, strongest at -36 dBm |
-| Join and DHCP | Waiting for a network's password |
+| Join | Home network (WPA2, channel 1, -37 dBm) 3 s after `wlan0` came up |
+| DHCP and Internet | Lease from the home router; ping, DNS, IPv6 and Tailscale work over Wi-Fi, with peers reached directly on the LAN |
 | Repeated loads | Clean after the block reset |
 
 Still open: the bus runs at 12 MHz, one block per transfer

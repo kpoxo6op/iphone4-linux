@@ -81,3 +81,27 @@ diff -ruN a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/common.c b/drivers/
  
  	/* Enable tx beamforming, errors can be ignored (not supported) */
  	(void)brcmf_fil_iovar_int_set(ifp, "txbf", 1);
+diff -ruN a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.c b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.c
+--- a/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.c
++++ b/drivers/net/wireless/broadcom/brcm80211/brcmfmac/fweh.c
+@@ -273,9 +273,17 @@
+ 			  event->emsg.ifidx, event->emsg.bsscfgidx,
+ 			  event->emsg.addr);
+ 		if (event->emsg.bsscfgidx >= BRCMF_MAX_IFS) {
+-			bphy_err(drvr, "invalid bsscfg index: %u\n",
+-				 event->emsg.bsscfgidx);
+-			goto event_free;
++			/*
++			 * The iPhone 4's BCM4329 firmware (4.221.54.30) sends
++			 * the join's SET_SSID and PSK_SUP events with bsscfg
++			 * index 255. It runs a single interface; dropping them
++			 * left every connect waiting forever.
++			 */
++			wiphy_info(drvr->wiphy, "event %u status %u reason %u: bsscfg %u, using 0\n",
++				   event->code, be32_to_cpu(event->emsg.status),
++				   be32_to_cpu(event->emsg.reason),
++				   event->emsg.bsscfgidx);
++			event->emsg.bsscfgidx = 0;
+ 		}
+ 
+ 		/* convert event message */
