@@ -33,9 +33,10 @@ the visible renderer has not been switched to it yet.
 The [LVGL touch frontend](docs/soy/touch-research.md) now runs on the phone.
 Virtual-contact tests exercise scrolling, pinch, sheets and recovery through
 Linux input. Physical touch works, and the phone joins WPA2 Wi-Fi with
-Apple's firmware ([kernel/n90-wifi](kernel/n90-wifi/README.md)). The strict
-[60 fps gate](docs/soy/performance.md) remains open; higher average frame rates
-do not erase individual stalls.
+Apple's firmware ([kernel/n90-wifi](kernel/n90-wifi/README.md)). On 22
+October all six motion surfaces passed the strict
+[60 fps gate](docs/soy/performance.md) on the phone, with no frame interval
+over 16.67 ms; the gate stays a release requirement for every change.
 
 It boots into RAM from Platt over USB, and Platt boots it again after a
 reboot. It gets Internet over Wi-Fi or through Platt's USB connection.

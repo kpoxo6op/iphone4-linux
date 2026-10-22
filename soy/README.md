@@ -17,8 +17,8 @@ Storage distinguishes the RAM filesystem from phone flash. Settings are read-onl
 
 The touch frontend uses pinned LVGL 9.6.0 for scrolling, snapping, gestures and
 layout, with pinned Pixman 0.46.4 for basic composition and pinch scaling.
-It currently **fails the 60 fps release requirement** by one or two frames on
-five of six surfaces; see the measured results in [performance.md](../docs/soy/performance.md).
+On 22 October all six motion surfaces passed the **60 fps release
+requirement** on the phone; see the measured results in [performance.md](../docs/soy/performance.md).
 [The research and interaction map](../docs/soy/touch-research.md) explain the
 choice. Physical touch arrives from the N1 controller through
 `kernel/n90-touch`; acceptance tests replay virtual contacts through uinput.
