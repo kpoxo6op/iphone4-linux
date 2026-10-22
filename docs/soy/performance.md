@@ -185,6 +185,35 @@ cheaper intermediate frame does not fit either: a preview frame alone takes
 close to the gate (worst 16.0 ms), and earlier runs the same afternoon
 missed 1–3 frames at 16.7–19 ms.
 
+## Evening of 22 October 2026: all six surfaces pass
+
+The pinch explanation above was wrong. In the trace the release arrived
+while the last preview frame was still drawing; the 9 ms gap came after it:
+the pass that read the release only marked the new text size, then the loop
+waited in `poll()` (up to 8 ms) before the next pass applied it and drew the
+new layout (12.5 ms). The main loop now applies a size the input just chose
+right after that pass's refresh, so the new layout follows the last preview
+frame at once: the release intervals are 13.2 ms (pinch in) and 12.6 ms
+(pinch out), against 21.8 ms before.
+
+Measured with `check_frames.py --host iphone4`: the phone on a USB charger
+rather than the laptop, reached over Tailscale through home Wi-Fi, with keep,
+the battery reader, the Wi-Fi keeper and the laptop's log follower running.
+
+| Surface | Average fps | p95 | p99 | Worst | Misses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reading | 108.7 | 10.5 ms | 11.3 ms | 11.9 ms | 0 / 1127 |
+| Pages | 86.0 | 13.0 ms | 14.2 ms | 14.9 ms | 0 / 889 |
+| Pinch in | 85.6 | 13.2 ms | 14.0 ms | 15.2 ms | 0 / 893 |
+| Pinch out | 89.8 | 13.9 ms | 16.0 ms | 16.5 ms | 0 / 930 |
+| Top sheet | 121.1 | 8.5 ms | 9.5 ms | 11.6 ms | 0 / 1245 |
+| Bottom sheet | 96.0 | 12.1 ms | 12.9 ms | 14.3 ms | 0 / 986 |
+
+**No surface misses the gate.** The margin is thin: pinch out's worst, 16.5 ms,
+is a preview frame in the middle of the gesture, and pages reach 14.9 ms.
+These are virtual contacts and completed damage copies; panel scanout and
+the glass are not measured.
+
 ## Latest phone measurement — still fails
 
 21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary
