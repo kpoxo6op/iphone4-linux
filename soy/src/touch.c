@@ -1104,7 +1104,8 @@ static void set_backlight(int on) {
   globfree(&g);
   backlight_state = ok ? on : -1;
 }
-/* Physical buttons (gpio-keys-polled) wake the screen; Power also sleeps it. */
+/* Physical buttons (gpio-keys-polled): Home and Power wake the screen, Power
+ * also sleeps it, and the volume buttons turn pages (turn_page). */
 static void open_keys(void) {
   glob_t g = {0};
   if (keyfd >= 0 || glob("/dev/input/event*", 0, NULL, &g)) {
@@ -1127,6 +1128,25 @@ static void open_keys(void) {
 }
 static void wake_display(const char *why);
 static void sleep_display(const char *why);
+/* The volume buttons turn the page: down shows the next screenful and up
+ * the one before, each keeping the last two lines in view. Past either end
+ * of a scene they move to the neighbouring scene, as a book would. Reading
+ * then needs one thumb, and no glass: gloves, rain, a camera in the other
+ * hand. */
+static void turn_page(int dir) {
+  View *v = &views[current];
+  int32_t y = lv_obj_get_scroll_y(v->body),
+          end = y + lv_obj_get_scroll_bottom(v->body),
+          step = BOTTOM - TOP - 2 * faces[body_faces[v->zoom]].line_height;
+  if (sheet || pointer_pressed || multi_latched || count == 0)
+    return;
+  if (dir > 0 ? y >= end : y <= 0) {
+    if (current + dir >= 0 && current + dir < count)
+      go(current + dir, 1);
+    return;
+  }
+  lv_obj_scroll_to_y(v->body, clamp(y + dir * step, 0, end), LV_ANIM_ON);
+}
 static void read_keys(void) {
   struct input_event e[16];
   ssize_t n;
@@ -1138,6 +1158,11 @@ static void read_keys(void) {
         sleep_display("power");
       else if (e[i].code == KEY_POWER || e[i].code == KEY_HOME)
         wake_display(e[i].code == KEY_POWER ? "power" : "home");
+      else if ((e[i].code == KEY_VOLUMEDOWN || e[i].code == KEY_VOLUMEUP) &&
+               !blank_screen) {
+        lv_display_trigger_activity(display);
+        turn_page(e[i].code == KEY_VOLUMEDOWN ? 1 : -1);
+      }
     }
   if (n < 0 && errno != EAGAIN) {
     close(keyfd);
