@@ -41,7 +41,7 @@ python3 soy/tools/scene.py journal                      # the day in plain words
 | Unplugged, on Wi-Fi | Nothing. The follower moved to Tailscale 11 s after the cable came out (22 October), and moving between home Wi-Fi and the Pixel hotspot did not interrupt it |
 | Unplugged, no Wi-Fi | The phone keeps running. Its kernel log (a 128 KiB ring) and the files in `/run` wait on the phone until the laptop reaches it again |
 | Kernel oops | keep notes it in the journal. On USB power it restarts the phone 30 s later, once the log has been copied, and the laptop boots it again; on battery a damaged phone that still shows pages beats one waiting in DFU mode, so it keeps running |
-| Reboot, watchdog reset or panic | Everything on the phone is lost; what the laptop already collected stays. The phone then waits in DFU mode until the laptop boots it |
+| Reboot, watchdog reset or panic | Everything on the phone is lost; what the laptop already collected stays. The phone then waits in DFU mode until the laptop boots it. The PMU keeps how and when it stopped (low battery, an oops restart, on purpose, or without warning, to the minute, with the battery voltage), and the next boot puts that in the journal ([last stop](../kernel/n90-battery/README.md#last-stop)) |
 | Frozen kernel | The watchdog resets the phone within a minute. Messages from the last seconds are lost |
 
 The device tree reserves 128 KiB at `0x0ffe0000` for ramoops, but the kernel

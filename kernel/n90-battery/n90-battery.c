@@ -34,6 +34,17 @@
  *   poweroff         switch the phone off through the PMU
  *   clock [save|load] the PMU's real-time clock: show it, store its offset
  *                    from the system time, or set the system time from it
+ *   mark oops|reboot record that keep is restarting the phone after an oops,
+ *                    or that someone is restarting it on purpose
+ *   lastrun          at boot: report once how and when the phone last stopped
+ *
+ * Last stop: serve writes a heartbeat to PMU bytes 0x89-0x8c every minute
+ * (state, the seconds counter in minutes, the battery voltage), which the PMU
+ * keeps while the phone is off. A planned stop replaces the state: low
+ * battery, an oops restart, a restart on purpose, or poweroff. At the next boot lastrun turns the
+ * record into a "last_stop" journal event; a heartbeat state still there
+ * means the phone stopped without warning (crash, watchdog reset, a battery
+ * that gave out first, or a hard reset), last seen at that minute.
  *
  * serve restarts the charger the same way, publishes the voltage and the
  * charge state, and publishes a percentage estimated from the voltage only
@@ -96,6 +107,13 @@
 #define PMU_RTC_OFFSET  0x84
 #define PMU_RTC_MAGIC   0x88
 #define RTC_MAGIC       0x5a
+#define PMU_LAST        0x89	/* state; 0x8a-0x8b minutes; 0x8c mV */
+#define LAST_REPORTED   0xa0
+#define LAST_RUNNING    0xa1
+#define LAST_BATTERY    0xa2
+#define LAST_OOPS       0xa3
+#define LAST_OFF        0xa4
+#define LAST_REBOOT     0xa5
 
 static int i2c = -1;
 
@@ -377,6 +395,71 @@ static int clock_cmd(const char *what)
 	return 0;
 }
 
+/* Where the phone was last, in bytes the PMU keeps while it is off, next to
+ * its seconds counter: the state, the counter in minutes (low 16 bits) and
+ * the battery voltage. The state goes last, so a torn write still reads as
+ * the previous record. */
+static void mark(int state, long mv)
+{
+	long counter = rtc_seconds();
+	int minutes = counter >= 0 ? (int)(counter / 60) & 0xffff : 0;
+	long v = mv > 3000 ? (mv - 3000) / 10 : 0;
+
+	pmu_write(PMU_LAST + 1, minutes & 0xff);
+	pmu_write(PMU_LAST + 2, minutes >> 8);
+	pmu_write(PMU_LAST + 3, v > 255 ? 255 : v);
+	pmu_write(PMU_LAST, state);
+}
+
+/* At boot: say once, in Soy's journal, how and when the phone last stopped. */
+static int lastrun(void)
+{
+	uint8_t b[4];
+	long counter = rtc_seconds(), now = time(NULL), at, mv;
+	const char *why;
+	char text[64];
+	time_t t;
+	FILE *f;
+
+	if (counter < 0 || pmu_read_n(PMU_LAST, b, 4)) {
+		fprintf(stderr, "cannot read the PMU\n");
+		return 1;
+	}
+	switch (b[0]) {
+	case LAST_RUNNING:
+		why = "unexpected";
+		break;
+	case LAST_BATTERY:
+		why = "battery";
+		break;
+	case LAST_OOPS:
+		why = "oops";
+		break;
+	case LAST_OFF:
+		why = "off";
+		break;
+	case LAST_REBOOT:
+		why = "reboot";
+		break;
+	default:
+		printf("no record of the last stop\n");
+		return 0;
+	}
+	at = now - 60L * (((int)(counter / 60) - (b[1] | b[2] << 8)) & 0xffff);
+	mv = b[3] ? 3000 + b[3] * 10L : -1;
+	t = at;
+	strftime(text, sizeof text, "%Y-%m-%d %H:%M UTC", gmtime(&t));
+	printf("last stop: %s, last seen %s, %ld mV\n", why, text, mv);
+	f = fopen("/run/soy/journal.jsonl", "a");
+	if (f) {
+		fprintf(f, "{\"t\":%ld,\"e\":\"last_stop\",\"why\":\"%s\",\"at\":%ld,\"mv\":%ld}\n",
+			now, why, at, mv);
+		fclose(f);
+	}
+	pmu_write(PMU_LAST, LAST_REPORTED);
+	return 0;
+}
+
 static void note_shutdown(long mv)
 {
 	FILE *f = fopen("/run/soy/journal.jsonl", "a");
@@ -392,7 +475,7 @@ static void note_shutdown(long mv)
 static void serve(const char *root)
 {
 	char battery[200], usb[200], path[256];
-	time_t stopped = 0, restarted = 0;
+	time_t stopped = 0, restarted = 0, marked = 0;
 	int low = 0, raised = 0;
 
 	snprintf(battery, sizeof battery, "%s/battery", root);
@@ -457,12 +540,18 @@ static void serve(const char *root)
 		    charging ? "Charging\n" :
 		    charge >= 0 && (charge & CHARGE_END) && mv >= 4100 ? "Full\n" :
 		    "Not charging\n", 0);
+		if (mv > 0 && now - marked >= 60) {
+			mark(LAST_RUNNING, mv);
+			marked = now;
+		}
 		low = supply >= 0 && !online && mv > 0 && mv < LOW_MV ? low + 1 : 0;
 		if (low >= 3) {
 			note_shutdown(mv);
 			sleep(20);
-			if (!(pmu_read(PMU_SUPPLY) & PMU_SUPPLY_USB))
+			if (!(pmu_read(PMU_SUPPLY) & PMU_SUPPLY_USB)) {
+				mark(LAST_BATTERY, mv);
 				poweroff();
+			}
 			low = 0;
 		}
 		sleep(10);
@@ -473,7 +562,7 @@ int main(int argc, char **argv)
 {
 	if (argc < 2) {
 		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | serve [dir] | poweroff | "
-			"clock [save|load]\n");
+			"clock [save|load] | mark oops|reboot | lastrun\n");
 		return 2;
 	}
 	i2c = open("/dev/i2c-0", O_RDWR);
@@ -487,10 +576,21 @@ int main(int argc, char **argv)
 		return usb_limit(atoi(argv[2]));
 	else if (!strcmp(argv[1], "serve"))
 		serve(argc > 2 ? argv[2] : "/run/power_supply");
-	else if (!strcmp(argv[1], "poweroff"))
+	else if (!strcmp(argv[1], "poweroff")) {
+		int vbat = adc(ADC_VBAT);
+
+		mark(LAST_OFF, vbat > 0 ? vbat_mv(vbat) : -1);
 		poweroff();
-	else if (!strcmp(argv[1], "clock"))
+	} else if (!strcmp(argv[1], "clock"))
 		return clock_cmd(argc > 2 ? argv[2] : "");
+	else if (!strcmp(argv[1], "mark") && argc > 2 &&
+		 (!strcmp(argv[2], "oops") || !strcmp(argv[2], "reboot"))) {
+		int vbat = adc(ADC_VBAT);
+
+		mark(strcmp(argv[2], "oops") ? LAST_REBOOT : LAST_OOPS,
+		     vbat > 0 ? vbat_mv(vbat) : -1);
+	} else if (!strcmp(argv[1], "lastrun"))
+		return lastrun();
 	else
 		return 2;
 	return 0;

@@ -473,6 +473,10 @@ def deploy_battery(run):
                'cat > /usr/sbin/n90-battery.new && chmod 755 /usr/sbin/n90-battery.new && '
                'mv /usr/sbin/n90-battery.new /usr/sbin/n90-battery',
                stdin=binary.read_bytes())
+    # Before serve's first heartbeat replaces it: how the phone last stopped,
+    # from bytes the PMU kept, into Soy's journal (n90-battery lastrun).
+    last = ssh('iphone4-usb', '/usr/sbin/n90-battery lastrun')
+    log(run, 'last_stop', detail=(last.stdout or last.stderr).decode().strip()[-200:])
     started = sent.returncode == 0 and ssh(
         'iphone4-usb', 'nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 '
         '</dev/null & sleep 2; cat /run/power_supply/battery/status').returncode == 0
