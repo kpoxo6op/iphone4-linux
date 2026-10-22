@@ -38,7 +38,14 @@ register `0x08` bit 5 set, `ich` at 0, and the battery falling from about
 and then the old value, as AppleD1815PMUPowerSource does
 (`0x8098cfb0`), cleared the flags and started a 1275-count charge current
 at once. `serve` repeats that five minutes after a timeout, or at the end of a
-charge below 4.1 V, at most every five minutes. The scales of `ich` and the
+charge below 4.1 V, at most every five minutes.
+
+A new cable starts the PMU at 100 mA again (`0x2b = 0x85`). On 22 October,
+plugged into a source other than the laptop after an hour on battery, the
+phone said Not charging with `ich` at 0, using more than the input allowed;
+raising the limit to 500 mA brought `ich` to about 1450 counts with VBUS
+6 % lower. `serve` now raises it once per plug-in through `usb-limit`, which
+puts the old value back if VBUS sags by more than a tenth. The scales of `ich` and the
 other channels are still unknown; the gas gauge (HDQ over UART5) remains the
 accurate source of percentage.
 
