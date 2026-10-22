@@ -101,9 +101,35 @@ into DFU mode, where the laptop boots it.
 in `0x0c`–`0x11`, drive the PMU GPIO outputs low, set `0x12` (OOCSHDWN).
 Neither the threshold nor the power-off has run on the phone yet.
 
+## Power draw
+
+While the charger is held at its input limit, the charge current is that
+limit minus what the phone uses, so `ich` doubles as a meter. On 22
+October, charging on a USB charger with the display blanked, `ich` read
+409, 913 and 1356 counts at 300, 400 and 500 mA: about 4.7 counts per mA
+(4.4 to 5.0 between steps), and the phone drawing about 210 mA (194 to 219)
+whatever the limit. At 500 mA, 20 s per step, noise about ±6 mA:
+
+| Change | Draw |
+|---|---|
+| Display blanked, idle (Wi-Fi, Tailscale, the laptop's follower) | about 210 mA |
+| Display on, idle (backlight at 1696) | +48 mA |
+| Processor fully busy (`yes`) | +34 mA |
+| Wi-Fi power saving off instead of on (`n90-wifi power`) | no change |
+
+On battery the same day, display blanked for 44 of 46 minutes, the voltage
+fell from 3994 to 3809 mV, 84 to 52 % on the open-circuit curve: about
+41 % an hour, roughly 2.5 hours from full. With about 210 mA that puts the
+battery near 0.5 Ah against 1.42 Ah new, an estimate until the gauge
+reports its capacity. The processor's own work is a small part of the draw;
+most of it is hardware that stays powered at full speed: no processor clock
+or voltage scaling, the display pipeline and panel still running while
+blanked, and possibly other peripherals or the modem.
+
 ## Next
 
-1. Learn the `ich` scale (charge current in mA) and how long a full charge
-   takes.
-2. Measure drain on battery with the display on and blanked.
-3. Gas gauge: HDQ over UART5 for the real percentage.
+1. Gas gauge: HDQ over UART5 for the real percentage, current and capacity.
+2. Find the steady 210 mA: PMU rails and PMGR clock gates that stay on,
+   the processor clock when idle, the display pipeline while blanked, and
+   the modem's power state. Register experiments belong on the laptop's
+   USB, where a hang recovers without a button.

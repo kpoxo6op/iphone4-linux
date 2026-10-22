@@ -27,7 +27,7 @@ in `boardtype` and `rxpo2g`.
 | `0002-brcmfmac-sdio-probe-error-path.patch` | brcmfmac freed the bus twice when the probe failed (oops) |
 | `0003-brcmfmac-old-firmware.patch` | Lets brcmfmac run Apple's 2013 firmware |
 | `0004-brcmfmac-n90-diagnostics.patch` | Optional: `n90_debug`, `n90_trace`, `n90_fwerr` bring-up logging |
-| `n90-wifi.c` | `scan`, `connect`, `join`, `link` over nl80211, without libnl or wpa_supplicant |
+| `n90-wifi.c` | `scan`, `connect`, `join`, `link`, `power` over nl80211, without libnl or wpa_supplicant |
 | `wifi-keep.sh` | `/usr/sbin/n90-wifi-keep`: loads the driver once per boot, joins known networks, holds a DHCP lease |
 | `sdio-probe.c` | Sends CMD5 by hand, for power and reset experiments without the driver |
 
