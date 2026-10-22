@@ -627,6 +627,42 @@ static void page_event(lv_event_t *e) {
     update_dots();
   }
 }
+/* Reading position and text size per scene survive a reboot: Soy keeps
+ * /run/soy/positions current, the laptop's follower copies it, and the boot
+ * pass puts it back before Soy starts. One "id scroll zoom" line a scene. */
+static double positions_due; /* when to rewrite the file; 0 when clean */
+static void mark_positions(void) {
+  if (!positions_due)
+    positions_due = now() + 2;
+}
+static void load_positions(void) {
+  char p[600], id[48];
+  int scroll, zoom;
+  path(p, sizeof p, rundir, "positions");
+  FILE *f = fopen(p, "re");
+  if (!f)
+    return;
+  while (fscanf(f, "%47s %d %d", id, &scroll, &zoom) == 3)
+    for (int i = 0; i < count; i++)
+      if (!strcmp(scenes[i].id, id)) {
+        scenes[i].scroll = scroll > 0 ? scroll : 0;
+        scenes[i].zoom = clamp(zoom, 0, 4);
+      }
+  fclose(f);
+}
+static void save_positions(void) {
+  char p[600], tmp[620];
+  path(p, sizeof p, rundir, "positions");
+  snprintf(tmp, sizeof tmp, "%s.tmp", p);
+  FILE *f = fopen(tmp, "we");
+  positions_due = 0;
+  if (!f)
+    return;
+  for (int i = 0; i < count; i++)
+    fprintf(f, "%s %d %d\n", scenes[i].id, scenes[i].scroll, scenes[i].zoom);
+  if (!fclose(f))
+    rename(tmp, p);
+}
 static void body_event(lv_event_t *e) {
   int index = (int)(intptr_t)lv_event_get_user_data(e);
   lv_event_code_t code = lv_event_get_code(e);
@@ -635,6 +671,7 @@ static void body_event(lv_event_t *e) {
       lv_event_get_target_obj(e) == views[index].body) {
     scenes[index].scroll = lv_obj_get_scroll_y(views[index].body);
     invalidate_page(index);
+    mark_positions();
   }
   if (multi_latched || sheet || index != current || press_stopped_motion)
     return;
@@ -834,6 +871,7 @@ static void resize_text(int index, int level, int anchor) {
     build_body(index);
   }
   scenes[index].zoom = level;
+  mark_positions();
   note("\"e\":\"zoom\",\"scene\":\"%s\",\"font_px\":%d", scenes[index].id,
        body_sizes[level]);
   if (block < v->nblocks)
@@ -1700,6 +1738,7 @@ int main(int argc, char **argv) {
     fprintf(stderr, "Invalid fonts or scene bundle\n");
     return 2;
   }
+  load_positions();
   if (initial) {
     int found = 0;
     for (int i = 0; i < count; i++)
@@ -1907,6 +1946,8 @@ int main(int argc, char **argv) {
        * blanked nothing moves, and writing it was most of Soy's idle CPU. */
       nextstatus = t + (blank_screen ? 2 : .1);
     }
+    if (positions_due && t >= positions_due && !moving && !pointer_pressed)
+      save_positions();
     struct pollfd fds[10] = {{ctl, POLLIN, 0}};
     int nfds = 1 + soy_input_pollfds(fds + 1, 8);
     int keyslot = -1;

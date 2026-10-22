@@ -132,6 +132,15 @@ within about 30 seconds; any later `put`, `publish` or `sync` also brings it
 over, and every boot installs the library's last saved scenes. If those fail on the phone, the boot falls back to
 the default scenes so the screen is never empty.
 
+## Where you were
+
+Each scene's reading position and text size survive restarts and reboots.
+Soy keeps `/run/soy/positions` (one `id scroll zoom` line a scene) at most
+2 s behind, the laptop's follower copies it to
+`.runtime/phone/private/soy-positions`, and the boot pass puts it back before
+Soy starts. The phone still opens on the scene `show` chose; going back to
+any other scene finds it where it was left.
+
 ## What the phone remembers
 
 Soy keeps a journal of what it showed, so whoever draws the next scene can

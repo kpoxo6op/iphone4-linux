@@ -412,6 +412,13 @@ def deploy_display(run):
     if not binary.exists():
         log(run, 'display_skipped', reason='no ARM Soy build')
         return
+    # Reading positions and text sizes from before the reboot, which the
+    # follower (harness/phone_follow.py) copied; Soy reads them at start.
+    positions = PRIVATE / 'soy-positions'
+    if positions.exists():
+        sent = ssh('iphone4-usb', 'mkdir -p /run/soy && cat > /run/soy/positions',
+                   stdin=positions.read_bytes())
+        log(run, 'positions_restored' if sent.returncode == 0 else 'positions_failed')
     if (SCENES / '.git').is_dir():
         result = sp.run([sys.executable, str(ROOT / 'soy/tools/scene.py'),
                          '--library', str(SCENES), '--ssh-config', str(SSH_CONFIG),
