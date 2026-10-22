@@ -18,6 +18,7 @@
  *                              FILE as "SSID<TAB>PMK" lines that is in
  *                              range; exit 3 when none is
  *   link [if]                  the network wlan0 is on, if any
+ *   power [on|off] [if]        show or set Wi-Fi power saving
  *   disconnect [if]
  */
 #include <errno.h>
@@ -393,6 +394,43 @@ static int link_status(int fd, int ifindex)
 	return 3;
 }
 
+static void power_cb(struct genlmsghdr *g, int len, void *arg)
+{
+	struct nlattr *tb[NL80211_ATTR_MAX + 1];
+
+	parse(tb, NL80211_ATTR_MAX, (char *)g + GENL_HDRLEN, len - GENL_HDRLEN);
+	if (tb[NL80211_ATTR_PS_STATE])
+		*(int *)arg = *(uint32_t *)DATA(tb[NL80211_ATTR_PS_STATE]);
+}
+
+static int power(int fd, int ifindex, const char *set)
+{
+	struct msg m;
+	int state = -1, err;
+
+	if (set) {
+		start(&m, family, NL80211_CMD_SET_POWER_SAVE, 0);
+		put_u32(&m, NL80211_ATTR_IFINDEX, ifindex);
+		put_u32(&m, NL80211_ATTR_PS_STATE,
+			strcmp(set, "on") ? NL80211_PS_DISABLED : NL80211_PS_ENABLED);
+		err = talk(fd, &m, NULL, NULL);
+		if (err) {
+			fprintf(stderr, "power: %s\n", strerror(-err));
+			return 1;
+		}
+	}
+	start(&m, family, NL80211_CMD_GET_POWER_SAVE, 0);
+	put_u32(&m, NL80211_ATTR_IFINDEX, ifindex);
+	err = talk(fd, &m, power_cb, &state);
+	if (err) {
+		fprintf(stderr, "power: %s\n", strerror(-err));
+		return 1;
+	}
+	printf("power save %s\n", state == NL80211_PS_ENABLED ? "on" :
+	       state == NL80211_PS_DISABLED ? "off" : "unknown");
+	return 0;
+}
+
 static int hexpmk(const char *hex, unsigned char *pmk)
 {
 	int i;
@@ -520,7 +558,9 @@ static int join(int fd, int ifindex, const char *file)
 int main(int argc, char **argv)
 {
 	const char *cmd = argc > 1 ? argv[1] : "";
-	int arg = !strcmp(cmd, "connect") || !strcmp(cmd, "join");
+	int set = !strcmp(cmd, "power") && argc > 2 &&
+		  (!strcmp(argv[2], "on") || !strcmp(argv[2], "off"));
+	int arg = !strcmp(cmd, "connect") || !strcmp(cmd, "join") || set;
 	const char *ifname = argc > (arg ? 3 : 2) ? argv[arg ? 3 : 2] : "wlan0";
 	int ifindex = if_nametoindex(ifname), fd;
 
@@ -538,6 +578,8 @@ int main(int argc, char **argv)
 		return link_status(fd, ifindex);
 	if (!strcmp(cmd, "disconnect"))
 		return disconnect(fd, ifindex);
+	if (!strcmp(cmd, "power"))
+		return power(fd, ifindex, set ? argv[2] : NULL);
 	if (!strcmp(cmd, "connect") && argc > 2) {
 		char hex[80] = "";
 		int ret;
@@ -551,6 +593,6 @@ int main(int argc, char **argv)
 	if (!strcmp(cmd, "join") && argc > 2)
 		return join(fd, ifindex, argv[2]);
 	fprintf(stderr, "usage: n90-wifi features|scan|link|disconnect [if] | "
-		"connect SSID [if] < pmk | join FILE [if]\n");
+		"power [on|off] [if] | connect SSID [if] < pmk | join FILE [if]\n");
 	return 2;
 }
