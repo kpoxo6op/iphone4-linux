@@ -495,7 +495,7 @@ def journal_summary(directory, day, labels):
         return f'No journal for {day}.'
     events.sort(key=lambda e: e['t'])
     reading, furthest, wakes, sleeps, restarts, battery, oopses = {}, {}, {}, {}, {}, [], []
-    shutdowns = []
+    shutdowns, stops = [], []
     scene, awake, since, last = None, False, None, None
 
     def add(name, seconds):
@@ -535,6 +535,8 @@ def journal_summary(directory, day, labels):
             oopses.append(t)
         elif kind == 'shutdown':
             shutdowns.append(e)
+        elif kind == 'last_stop':
+            stops.append(e)
         last = t
     if awake:
         end = min(time.time(), last + 60) if day == time.strftime('%Y-%m-%d') else last
@@ -569,6 +571,16 @@ def journal_summary(directory, day, labels):
     if oopses:
         out.append('Kernel oops at ' + ', '.join(clock(t) for t in oopses) +
                    f' (details in .runtime/phone/private/logs/{day}/kernel.log)')
+    for e in stops:
+        how = {'battery': 'switched itself off, battery low',
+               'oops': 'restarted itself after a kernel oops',
+               'off': 'was switched off',
+               'reboot': 'was restarted on purpose',
+               }.get(e.get('why'), 'stopped without warning (a crash, the watchdog, '
+                                   'a flat battery or a hard reset)')
+        volts = f", {e['mv'] / 1000:.2f} V" if e.get('mv', -1) > 0 else ''
+        out.append(f"Before the boot at {clock(e['t'])}: {how}; "
+                   f"last seen {clock(e['at'])}{volts}")
     return '\n'.join(out)
 
 

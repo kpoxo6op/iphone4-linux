@@ -88,6 +88,30 @@ n90-battery clock save    # store the offset from the system time
 n90-battery clock load    # set the system time from the PMU
 ```
 
+## Last stop
+
+The phone keeps nothing across a reboot, but the PMU does: its seconds
+counter runs while the phone is off, and its general-purpose bytes keep their
+values. `serve` writes a heartbeat to `0x89`–`0x8c` every minute: a state
+(`0xa1` running), the counter in minutes (low 16 bits) and the battery
+voltage (10 mV steps above 3 V). A planned stop writes its own state first:
+`0xa2` low battery, `0xa3` keep restarting after an oops (`mark oops`),
+`0xa4` poweroff, `0xa5` a restart on purpose (`mark reboot`).
+
+At the next boot the laptop's boot pass runs `n90-battery lastrun` before
+`serve` starts. It turns the record into a `last_stop` event in Soy's
+journal and marks it reported (`0xa0`), so it is told once. A heartbeat
+state still there means the phone stopped without warning: a crash, the
+watchdog, a battery that gave out first, or a hard reset, last seen within
+a minute of the recorded time. `scene.py journal` prints it as, for
+example, "Before the boot at 19:22: was restarted on purpose; last seen
+19:12, 4.17 V".
+
+On 22 October the record survived a restart, DFU mode and the laptop's boot
+unchanged; iBoot's boot-voltage bytes beside it (`0x8d`–`0x8e`) changed.
+iBoot names `0x80`–`0x83`, `0x8d`–`0x8f`; the clock offset uses
+`0x84`–`0x88`; `0x89`–`0x8c` read zero before.
+
 ## Low battery
 
 On battery, three readings in a row (30 s) under 3.45 V, about 2 % on the

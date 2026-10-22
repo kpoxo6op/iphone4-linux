@@ -138,6 +138,7 @@ check_oops() {
 	if { [ "$u" = 1 ] || [ "$c" = 1 ]; } && [ $((now - oops_at)) -ge 30 ] &&
 	    ! held oops; then
 		say "restarting after the oops"
+		/usr/sbin/n90-battery mark oops 2>/dev/null
 		echo b > /proc/sysrq-trigger
 	fi
 }
