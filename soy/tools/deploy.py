@@ -163,6 +163,13 @@ mv -Tf /opt/soy/current.new /opt/soy/current''')
 rm -f /opt/soy/previous.new
 ln -s {previous} /opt/soy/previous.new
 mv -Tf /opt/soy/previous.new /opt/soy/previous''')
+    # The root filesystem is RAM: keep only the releases current and previous
+    # point at. A day of deploys left 13 (89 MB) and the next one ran out of
+    # space unpacking.
+    remote('''cd /opt/soy && c=$(readlink current) && p=$(readlink previous)
+for r in releases/*; do
+ [ "$r" = "$c" ] || [ "$r" = "$p" ] || rm -rf "$r"
+done''')
 except Exception as exc:
     record['state'] = 'failed'
     record['error'] = str(exc)
