@@ -35,6 +35,8 @@ import scene  # noqa: E402
 PRIVATE = ROOT / '.runtime/phone/private'
 LOGS = PRIVATE / 'logs'
 STATE = LOGS / 'state.json'
+# Soy's reading position and text size per scene; the boot pass restores it.
+POSITIONS = PRIVATE / 'soy-positions'
 USB_ADDRESS = '10.84.4.1'  # the laptop's end of the phone's USB network
 # Service logs on the phone; keep.sh and the boot start the services this way.
 FILES = {
@@ -144,6 +146,15 @@ def copy_files(link, offsets):
         offsets[name] = int(o) + len(whole)
 
 
+def copy_positions(link):
+    """Keep the latest copy of Soy's positions for the next boot."""
+    text = link.run('cat /run/soy/positions 2>/dev/null; true', timeout=20)
+    if text and (not POSITIONS.exists() or POSITIONS.read_bytes() != text):
+        temp = POSITIONS.with_suffix('.tmp')
+        temp.write_bytes(text)
+        temp.replace(POSITIONS)
+
+
 def on_usb():
     out = sp.run(['ip', '-o', '-4', 'addr', 'show'], capture_output=True, text=True).stdout
     return f' {USB_ADDRESS}/' in out
@@ -174,6 +185,7 @@ def session(route, host, interval):
         while kernel.is_alive():
             copy_files(link, state['files'])
             scene.journal_pull(link, scene.JOURNAL)
+            copy_positions(link)
             with lock:
                 save(state)
             if route == 'tailscale' and on_usb():
