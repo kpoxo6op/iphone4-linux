@@ -64,6 +64,11 @@ static lv_obj_t *pager, *dots[9], *nav, *sheet, *sheet_card;
 static lv_obj_t *sheet_backdrop;
 static lv_obj_t *sheet_picture;
 static lv_obj_t *sheet_shield;
+/* The screen as it was when a sheet opened, undimmed. While nothing under
+ * the sheet changes, closing it puts these pixels back instead of redrawing
+ * the scene. */
+static uint8_t *under;
+static int under_valid;
 static lv_display_t *display;
 static lv_indev_t *pointer;
 static lv_obj_t *blank_screen;
@@ -621,6 +626,8 @@ static void page_event(lv_event_t *e) {
     note_scene();
   if (code != LV_EVENT_SCROLL)
     return;
+  if (sheet)
+    under_valid = 0;
   int next = clamp((lv_obj_get_scroll_x(pager) + W / 2) / W, 0, count - 1);
   if (next != current) {
     current = next;
@@ -672,6 +679,8 @@ static void body_event(lv_event_t *e) {
     scenes[index].scroll = lv_obj_get_scroll_y(views[index].body);
     invalidate_page(index);
     mark_positions();
+    if (sheet)
+      under_valid = 0;
   }
   if (multi_latched || sheet || index != current || press_stopped_motion)
     return;
@@ -736,6 +745,13 @@ static void reserve_gesture_buffers(void) {
       cache_bytes += backdrop->data_size;
     }
   }
+  if (!under && cache_bytes + PIXEL_BYTES < CACHE_LIMIT) {
+    under = malloc(PIXEL_BYTES);
+    if (under) {
+      memset(under, 0, PIXEL_BYTES);
+      cache_bytes += PIXEL_BYTES;
+    }
+  }
   if (!card && cache_bytes + (size_t)W * 800 * 4 < CACHE_LIMIT) {
     card = lv_draw_buf_create(W, 800, LV_COLOR_FORMAT_XRGB8888, W * 4);
     if (card) {
@@ -747,6 +763,7 @@ static void reserve_gesture_buffers(void) {
 static void build_pages(void) {
   reserve_gesture_buffers();
   end_preview(0);
+  under_valid = 0;
   if (sheet)
     close_sheet();
   lv_indev_reset(pointer, NULL);
@@ -920,6 +937,7 @@ static void sheet_event(lv_event_t *e) {
 static void button_event(lv_event_t *e) {
   if (multi_latched)
     return;
+  under_valid = 0; /* every action changes the scene under the sheet */
   intptr_t action = (intptr_t)lv_event_get_user_data(e);
   tap_events++;
   if (action >= 0) {
@@ -981,6 +999,11 @@ static void open_sheet(int kind, int from_edge) {
   if (backdrop) {
     lv_draw_buf_t *buf = backdrop;
     {
+      if (under) {
+        memcpy(under, pixels, PIXEL_BYTES);
+        /* Live values keep changing under the sheet. */
+        under_valid = !views[current].live_count;
+      }
       memcpy(buf->data, pixels, PIXEL_BYTES);
       /* One fixed dimmed backdrop, rather than blending the whole display
        * for every pixel of panel movement. Keep the hot path to opaque copies.
@@ -1095,7 +1118,15 @@ static void open_sheet(int kind, int from_edge) {
 static void close_sheet(void) {
   if (!sheet)
     return;
+  /* Redrawing the whole scene took 17 ms, a missed frame at every close.
+   * When nothing under the sheet changed since it opened, delete it without
+   * invalidating, put the saved pixels back and present the whole screen,
+   * using a one-pixel refresh so the frame goes through flush() and the
+   * frame trace like any other. */
+  int fast = under && under_valid && direct_display && !blank_screen;
   lv_indev_reset(pointer, NULL);
+  if (fast)
+    lv_display_enable_invalidation(display, false);
   lv_obj_delete(sheet);
   lv_obj_delete(sheet_shield);
   sheet_shield = NULL;
@@ -1103,6 +1134,13 @@ static void close_sheet(void) {
     lv_obj_delete(sheet_backdrop);
     sheet_backdrop = NULL;
   }
+  if (fast) {
+    lv_display_enable_invalidation(display, true);
+    memcpy(pixels, under, PIXEL_BYTES);
+    damage = (lv_area_t){0, 0, W - 1, H - 1};
+    lv_obj_invalidate_area(lv_screen_active(), &(lv_area_t){0, 0, 0, 0});
+  }
+  under_valid = 0;
   sheet = NULL;
   sheet_card = NULL;
   sheet_picture = NULL;
@@ -1259,6 +1297,7 @@ static void sleep_display(const char *why) {
   end_preview(0);
   zoom_pending = -1;
   cancel_motion();
+  under_valid = 0;
   if (sheet)
     close_sheet();
   wake_contact = contacts_active != 0;
@@ -1866,9 +1905,13 @@ int main(int argc, char **argv) {
       prepare_after = t + .15;
       lv_display_trigger_activity(display);
     }
-    /* Each source still samples once per second during gestures. Spread the
-     * independent reads across frames instead of blocking one frame on all
-     * telemetry and device discovery at once. */
+    /* One source every 0.2 s, so no frame waits on all telemetry and device
+     * discovery at once. Not while a finger or an animation is moving
+     * something: a source costs up to 7 ms and pushed motion frames past
+     * 16.67 ms; the readings can wait until the motion stops. */
+    if (t >= nextstats &&
+        (contacts_active || lv_anim_count_running() || lv_obj_is_scrolling(pager)))
+      nextstats = t + .2;
     if (t >= nextstats) {
       double began = now();
       switch (stat_phase) {
@@ -1951,6 +1994,12 @@ int main(int argc, char **argv) {
        * content after this refresh started; draw it now, not a tick later. */
       if (animating || moving)
         lv_refr_now(display);
+      /* The input just read may have closed a sheet (a release at the closed
+       * end). Close it in this pass, not after the next poll. */
+      if (close_pending) {
+        close_sheet();
+        lv_refr_now(display);
+      }
       if (idle_seconds && !contacts_active &&
           lv_display_get_inactive_time(display) >= idle_seconds * 1000u)
         sleep_display("idle");
