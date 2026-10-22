@@ -1,6 +1,8 @@
 # N90 Wi-Fi (BCM4329 on SDIO)
 
-Work in progress, 21–22 October 2026. Wi-Fi does not work yet.
+The phone scans and joins 2.4 GHz WPA2 networks under Linux (22 October
+2026). Joining has been exercised up to the firmware's handshake offload;
+see Status.
 
 ## Wiring
 
@@ -17,25 +19,85 @@ The device tree's `vendor-id` is filled in by iBoot, so the IPSW does not say
 whether this phone has the Murata or the USI module. Their NVRAMs differ only
 in `boardtype` and `rxpo2g`.
 
-## Driver
+## Pieces
 
-`0001-mmc-sdhci-s5l8930.patch` adds `sdhci-s5l8930`, an SDHCI platform glue.
-Without a device tree node, `fixed=1` registers the host at its known
-address, interrupt, clock gate and WL_REG_ON. Two quirks:
+| File | What it is |
+|---|---|
+| `0001-mmc-sdhci-s5l8930.patch` | SDHCI glue for the A4 SDIO host (`sdhci-s5l8930`) |
+| `0002-brcmfmac-sdio-probe-error-path.patch` | brcmfmac freed the bus twice when the probe failed (oops) |
+| `0003-brcmfmac-old-firmware.patch` | Lets brcmfmac run Apple's 2013 firmware |
+| `0004-brcmfmac-n90-diagnostics.patch` | Optional: `n90_debug`, `n90_trace`, `n90_fwerr` bring-up logging |
+| `n90-wifi.c` | `scan`, `connect`, `join`, `link` over nl80211, without libnl or wpa_supplicant |
+| `wifi-keep.sh` | `/usr/sbin/n90-wifi-keep`: loads the driver once per boot, joins known networks, holds a DHCP lease |
+| `sdio-probe.c` | Sends CMD5 by hand, for power and reset experiments without the driver |
 
-- The BCM4329 CIS has no function 0 FUNCE tuple, so the core computes a 0 Hz
-  clock after reading it. The glue runs the bus at `max_mhz` instead
-  (default 25).
-- The card interrupt is polled by the MMC core every 10 ms unless
-  `card_irq=1`. If the A4 host cannot mask the card interrupt, using it
-  would storm.
+`harness/phone_boot.py` installs all of it on every boot (`deploy_wifi`):
+the modules from `output/wifi/`, Apple's firmware and NVRAM, the tool, the
+keeper, and the known networks. keep (`kernel/n90-keep`) starts the keeper
+and restarts it if it stops. The keeper leaves the radio off until there is
+a known network.
 
-`sdio-probe.c` sends CMD5 by hand to vary power, clock and reset ordering
-without the driver.
+## Known networks
 
-Build the modules against the lean kernel tree (`e899dceb`); `CONFIG_MODVERSIONS`
-is off, so `KBUILD_MODPOST_WARN=1` lets brcmfmac link without a full
-`Module.symvers`:
+Boris keeps `SSID<TAB>password` lines in
+`.runtime/phone/private/wifi/networks` on the laptop, out of Git. The boot
+pass derives each network's WPA2 key (PBKDF2-SHA1, 4096 rounds, the SSID as
+salt) and sends only that to `/run/wifi/networks` on the phone. The firmware
+does the four-way handshake itself (brcmfmac reports
+`NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK`), so the phone needs no
+supplicant. The chip only does 2.4 GHz: a Pixel hotspot needs Extend
+compatibility on, with WPA2 or WPA2/WPA3 security.
+
+Apple's NVRAM has no `macaddr`; iOS adds the phone's own from syscfg.
+Without one the firmware stops with `Failed to init wireless side, err: 21`.
+The boot pass appends a fixed, locally administered address kept in
+`.runtime/phone/private/wifi/macaddr`.
+
+## What it took
+
+Each step was found on the phone with the diagnostics patch.
+
+1. **Byte-mode CMD53.** The CIS has no FUNCE tuples, so byte-mode transfers
+   came out 0 bytes long. The glue sets `MMC_QUIRK_BLKSZ_FOR_BYTE_MODE`.
+2. **A word late after a failed read.** The BCM4329 answers reads of
+   chipcommon registers it lacks (`capabilities_ext`, `0x180000ac`) with a
+   bad CRC. The A4 host keeps that block in its buffer through an SDHCI data
+   reset, so every later PIO read returned the word before. brcmfmac then
+   read `pmucapabilities` as `pmucontrol` and wrote it back, which stopped
+   the chip's backplane; the firmware upload hung on its first block. The
+   glue drains the stale words after the reset.
+3. **Clean retries.** Only a reset of the whole block clears that state:
+   bit 31 of its PMGR gate (`0xbf1010a0`, openiBoot `clock_gate_reset`). The
+   glue pulses it at probe, so a reload no longer needs a phone restart.
+4. **Card interrupts.** With the host's SDIO interrupt off, sdhci's
+   `MMC_CAP2_SDIO_IRQ_NOTHREAD` also left the MMC core without its polling
+   thread, so brcmfmac never heard the firmware. The glue clears it and the
+   core polls every 10 ms.
+5. **Old firmware.** 4.221.54.30 rejects the scan dwell-time ioctls and
+   frame bursting, lacks `per_chan_info`, and reports scan results as
+   `wl_bss_info` version 108 (109 without the trailing SNR). brcmfmac treated
+   each of these as fatal.
+
+## Status
+
+| Check | Result (22 October) |
+|---|---|
+| Firmware download | Under a second, then `wl0: Broadcom BCM4329 802.11 Wireless Controller 4.221.54.30` |
+| `wlan0` | Up; `n90-wifi features`: `psk_offload yes` |
+| Scan | 6 networks on channels 1, 6, 11, strongest at -36 dBm |
+| Join and DHCP | Waiting for a network's password |
+| Repeated loads | Clean after the block reset |
+
+Still open: the bus runs at 12 MHz, one block per transfer
+(`single_block=1`); multi-block transfers and 25 MHz are untested. Once, on
+22 October, a failed driver start took the phone off USB until a hard reset;
+the failure itself is fixed, the cause of the USB loss is not known.
+
+## Building
+
+Apply the patches to the lean kernel tree (`e899dceb`) and build the modules;
+`CONFIG_MODVERSIONS` is off, so `KBUILD_MODPOST_WARN=1` lets brcmfmac link
+without a full `Module.symvers`. Then copy them to `output/wifi/`:
 
 ```sh
 make -C $SRC O=$BUILD ARCH=arm CROSS_COMPILE=arm-buildroot-linux-gnueabihf- \
@@ -44,27 +106,5 @@ make -C $SRC O=$BUILD ARCH=arm CROSS_COMPILE=arm-buildroot-linux-gnueabihf- \
   lib/crypto/libarc4.ko drivers/net/wireless/broadcom/brcm80211/brcmutil/brcmutil.ko \
   drivers/net/wireless/broadcom/brcm80211/brcmfmac/brcmfmac.ko \
   drivers/net/wireless/broadcom/brcm80211/brcmfmac/wcc/brcmfmac-wcc.ko
+make -C kernel/n90-wifi    # output/wifi/n90-wifi
 ```
-
-## Results
-
-1. With the gate, PMU GPIO 8 and WL_REG_ON, the host enumerates the chip:
-   SDIO functions 1–3, 4-bit bus at 24 MHz.
-2. Loading `libarc4`, `cfg80211`, `brcmutil`, `brcmfmac` and `brcmfmac-wcc`
-   on 21 October reset the phone within about 20 s. No log survived. The lean
-   kernel has `CONFIG_PANIC_ON_OOPS=y` and boots with `panic=10`, so any oops
-   reboots it; that fits the timing. A battery brownout when the radio starts
-   is the other candidate: 25 minutes earlier VBAT read about 4.05 V on USB
-   with almost no charge current (`kernel/n90-battery`).
-3. After that reset openiBoot accepted no kernel upload until a hard reset.
-
-## Next attempt
-
-1. `n90-battery probe`; raise the USB input limit to 500 mA if it is 100 mA.
-2. `echo 0 > /proc/sys/kernel/panic_on_oops`, and stream `/proc/kmsg` to the
-   laptop over SSH so the last messages survive.
-3. Write `0x0b` to PMU `0x58`, then `insmod sdhci-pltfm.ko` and
-   `insmod sdhci-s5l8930.ko fixed=1 max_mhz=12` (polled card interrupt).
-4. Load the stack one module at a time and read the log between steps.
-5. Afterwards write `0x09` back to `0x58`, so a reset does not leave the radio
-   powered.

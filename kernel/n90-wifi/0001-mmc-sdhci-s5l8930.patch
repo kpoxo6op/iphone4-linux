@@ -29,7 +29,7 @@ diff -ruN a/drivers/mmc/host/Makefile b/drivers/mmc/host/Makefile
 diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 --- a/drivers/mmc/host/sdhci-s5l8930.c
 +++ b/drivers/mmc/host/sdhci-s5l8930.c
-@@ -0,0 +1,225 @@
+@@ -0,0 +1,310 @@
 +// SPDX-License-Identifier: GPL-2.0
 +/*
 + * SDHCI glue for the Apple S5L8930 (A4) SDIO host, which carries the iPhone 4
@@ -48,6 +48,7 @@ diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 +#include <linux/of.h>
 +#include <linux/of_address.h>
 +#include <linux/of_irq.h>
++#include <linux/mmc/card.h>
 +#include <linux/mmc/host.h>
 +#include <linux/platform_device.h>
 +#include "sdhci-pltfm.h"
@@ -72,6 +73,55 @@ diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 +static bool card_irq;
 +module_param(card_irq, bool, 0444);
 +MODULE_PARM_DESC(card_irq, "Use the host's SDIO card interrupt instead of polling");
++
++/* Bring-up experiments with the data path. */
++static bool single_block;
++module_param(single_block, bool, 0444);
++MODULE_PARM_DESC(single_block, "One block per transfer (SDHCI_QUIRK_NO_MULTIBLOCK)");
++static bool max_timeout;
++module_param(max_timeout, bool, 0444);
++MODULE_PARM_DESC(max_timeout, "Use the longest data timeout (SDHCI_QUIRK_BROKEN_TIMEOUT_VAL)");
++static bool trace;
++module_param(trace, bool, 0644);
++MODULE_PARM_DESC(trace, "Log every interrupt during a data transfer");
++
++struct s5l8930_sdhci {
++	unsigned int stale;	/* words a failed PIO read left in the buffer */
++};
++
++static u32 s5l8930_sdhci_irq(struct sdhci_host *host, u32 intmask)
++{
++	struct s5l8930_sdhci *priv = sdhci_pltfm_priv(sdhci_priv(host));
++
++	if (host->data && (host->data->flags & MMC_DATA_READ) &&
++	    !(host->flags & SDHCI_REQ_USE_DMA) &&
++	    (intmask & (SDHCI_INT_DATA_CRC | SDHCI_INT_DATA_END_BIT)))
++		priv->stale += DIV_ROUND_UP(host->data->blksz, 4);
++	if (trace && (host->data || (intmask & ~SDHCI_INT_RESPONSE)))
++		pr_info("%s: irq %08x present %08x blocks %u blkcnt %u\n",
++			mmc_hostname(host->mmc), intmask,
++			sdhci_readl(host, SDHCI_PRESENT_STATE), host->blocks,
++			sdhci_readw(host, SDHCI_BLOCK_COUNT));
++	return intmask;
++}
++
++/*
++ * A PIO read that fails its CRC still leaves its block in the buffer, and
++ * the SDHCI data reset does not flush it, so every later read would hand
++ * back the block before. The BCM4329 answers reads of chipcommon registers
++ * it lacks, such as capabilities_ext, with a bad CRC; brcmfmac then read
++ * pmucapabilities as pmucontrol and wrote it back, which stopped the chip's
++ * backplane. Read the leftover out after the reset.
++ */
++static void s5l8930_sdhci_reset(struct sdhci_host *host, u8 mask)
++{
++	struct s5l8930_sdhci *priv = sdhci_pltfm_priv(sdhci_priv(host));
++
++	sdhci_reset(host, mask);
++	if (mask & (SDHCI_RESET_DATA | SDHCI_RESET_ALL))
++		for (; priv->stale; priv->stale--)
++			sdhci_readl(host, SDHCI_BUFFER);
++}
 +
 +static void s5l8930_sdhci_set_power(struct sdhci_host *host, unsigned char mode,
 +				    unsigned short vdd)
@@ -101,12 +151,24 @@ diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 +	sdhci_set_clock(host, clock);
 +}
 +
++/*
++ * The CIS has no function FUNCE tuples either, so every function's
++ * max_blksize stays 0 and byte-mode CMD53 transfers come out 0 bytes long
++ * (WARN in mmc_io_rw_extended, then reads of 0xffffffff). Size byte mode by
++ * the block size the function driver sets instead.
++ */
++static void s5l8930_sdhci_init_card(struct mmc_host *mmc, struct mmc_card *card)
++{
++	card->quirks |= MMC_QUIRK_BLKSZ_FOR_BYTE_MODE;
++}
++
 +static const struct sdhci_ops s5l8930_sdhci_ops = {
 +	.set_clock = s5l8930_sdhci_set_clock,
 +	.set_power = s5l8930_sdhci_set_power,
 +	.set_bus_width = sdhci_set_bus_width,
-+	.reset = sdhci_reset,
++	.reset = s5l8930_sdhci_reset,
 +	.set_uhs_signaling = sdhci_set_uhs_signaling,
++	.irq = s5l8930_sdhci_irq,
 +};
 +
 +static const struct sdhci_pltfm_data s5l8930_sdhci_pdata = {
@@ -130,9 +192,20 @@ diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 +	/* The status nibble (bits 4-7) follows the request once the gate opens. */
 +	ret = readl_poll_timeout(gate, val, ((val >> 4) & 0xf) == (val & 0xf),
 +				 10, 10000);
-+	if (ret)
++	if (ret) {
 +		dev_err(&pdev->dev, "clock gate did not open: %#x\n", val);
-+	return ret;
++		return ret;
++	}
++	/*
++	 * Pulse the block's own reset, bit 31 of its gate (openiBoot
++	 * clock_gate_reset). After a failed transfer the SDHCI software reset
++	 * leaves this host handing back every PIO read one word late, until
++	 * the block is reset like this or the phone restarts.
++	 */
++	writel(readl(gate) | BIT(31), gate);
++	udelay(1);
++	writel(readl(gate) & ~BIT(31), gate);
++	return 0;
 +}
 +
 +static int s5l8930_sdhci_probe(struct platform_device *pdev)
@@ -149,7 +222,8 @@ diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 +		if (!wlan_reset)
 +			return -ENOMEM;
 +	}
-+	host = sdhci_pltfm_init(pdev, &s5l8930_sdhci_pdata, 0);
++	host = sdhci_pltfm_init(pdev, &s5l8930_sdhci_pdata,
++				sizeof(struct s5l8930_sdhci));
 +	if (IS_ERR(host))
 +		return PTR_ERR(host);
 +	ret = mmc_of_parse(host->mmc);
@@ -167,11 +241,22 @@ diff -ruN a/drivers/mmc/host/sdhci-s5l8930.c b/drivers/mmc/host/sdhci-s5l8930.c
 +	}
 +	if (max_mhz && (!host->mmc->f_max || host->mmc->f_max > max_mhz * 1000000))
 +		host->mmc->f_max = max_mhz * 1000000;
++	host->mmc_host_ops.init_card = s5l8930_sdhci_init_card;
++	if (single_block)
++		host->quirks |= SDHCI_QUIRK_NO_MULTIBLOCK;
++	if (max_timeout)
++		host->quirks |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
 +	ret = sdhci_setup_host(host);
 +	if (ret)
 +		return ret;
-+	if (!card_irq)
++	if (!card_irq) {
++		/*
++		 * Poll instead: without its own thread (sdhci's NOTHREAD)
++		 * the MMC core would never look at the card's interrupts.
++		 */
 +		host->mmc->caps &= ~MMC_CAP_SDIO_IRQ;
++		host->mmc->caps2 &= ~MMC_CAP2_SDIO_IRQ_NOTHREAD;
++	}
 +	ret = __sdhci_add_host(host);
 +	if (ret)
 +		sdhci_cleanup_host(host);

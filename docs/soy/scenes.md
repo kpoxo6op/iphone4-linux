@@ -139,11 +139,13 @@ see how the last ones were used. It is a JSON line per event in
 `/run/soy/journal.jsonl` on the phone: the renderer starting, each settled
 scene change with how far the scene being left was read, sleep and wake with
 the reason (idle, power, home, touch, remote), text size changes, scene
-reloads, a battery sample every five minutes, and keep's restarts.
+reloads, a battery sample every five minutes, keep's restarts and kernel
+oopses.
 
-The phone watcher copies new lines to `.runtime/phone/private/journal/`
-on this computer about once a minute while the phone is on USB, one file per
-day. The phone keeps its journal in RAM, so a field test away from the laptop
+The laptop's follower ([watching the phone](../watching-the-phone.md)) copies
+new lines to `.runtime/phone/private/journal/` on this computer, one file per
+day: every 10 s over USB, every 30 s over Tailscale when the phone is on Wi-Fi
+elsewhere. The phone keeps its journal in RAM, so a field test out of reach
 comes back with it as long as the phone did not reboot.
 
 ```sh
@@ -153,8 +155,9 @@ python3 soy/tools/scene.py journal pull            # copy now
 ```
 
 The summary gives screen-on time per scene and how far each was read, the
-battery at the start and end of the day, how the screen woke and slept, and
-anything keep restarted. The journal stays on this computer and out of Git.
+battery at the start and end of the day, how the screen woke and slept,
+anything keep restarted, and any kernel oops. The journal stays on this
+computer and out of Git.
 
 ## Before calling a scene done
 
