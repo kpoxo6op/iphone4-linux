@@ -16,7 +16,7 @@ can come first; touch and Wi-Fi do not block the initial tailnet path.
 
 ## Current work
 
-**First boot passed; the phone is currently offline.** On 20 October 2026, the N90AP booted
+**First boot passed.** On 20 October 2026, the N90AP booted
 Linux 6.17.0-rc1 and joined Tailscale. SSH worked over both USB and the phone's
 own tailnet connection. Interactive terminals, file read/write and rejection
 of a wrong SSH key passed on the hardware. A 30-minute tailnet session also passed.
@@ -32,12 +32,14 @@ Its [terminal library passes an ARMv7 shell test on this phone](soy/ghostty/READ
 the visible renderer has not been switched to it yet.
 The [LVGL touch frontend](docs/soy/touch-research.md) now runs on the phone.
 Virtual-contact tests exercise scrolling, pinch, sheets and recovery through
-Linux input. Physical touch and Wi-Fi are still missing. The strict
+Linux input. Physical touch works, and the phone joins WPA2 Wi-Fi with
+Apple's firmware ([kernel/n90-wifi](kernel/n90-wifi/README.md)). The strict
 [60 fps gate](docs/soy/performance.md) remains open; higher average frame rates
 do not erase individual stalls.
 
-It boots into RAM and gets Internet through Platt's USB connection. Reboot
-recovery, Wi-Fi, touch and persistent installation are still work ahead.
+It boots into RAM from Platt over USB, and Platt boots it again after a
+reboot. It gets Internet over Wi-Fi or through Platt's USB connection.
+Booting without the laptop and persistent installation are still work ahead.
 See the [first-boot evidence](docs/first-phone-attempt.md) and
 [access from Platt](docs/platt-usb.md).
 
