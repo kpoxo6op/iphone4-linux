@@ -37,7 +37,9 @@
  *
  * serve restarts the charger the same way, publishes the voltage and the
  * charge state, and publishes a percentage estimated from the voltage only
- * on battery: while charging the voltage reads high.
+ * on battery: while charging the voltage reads high. When a cable comes in
+ * it raises the USB limit to 500 mA, as usb-limit does: the PMU starts again
+ * at 100 mA, less than the phone uses, so it drained on a charger.
  *
  * Low battery: on battery, three readings in a row (30 s) under 3.45 V,
  * about 2 % left, switch the phone off before the battery browns it out.
@@ -391,7 +393,7 @@ static void serve(const char *root)
 {
 	char battery[200], usb[200], path[256];
 	time_t stopped = 0, restarted = 0;
-	int low = 0;
+	int low = 0, raised = 0;
 
 	snprintf(battery, sizeof battery, "%s/battery", root);
 	snprintf(usb, sizeof usb, "%s/usb", root);
@@ -410,6 +412,18 @@ static void serve(const char *root)
 		time_t now = time(NULL);
 		long mv = vbat > 0 ? vbat_mv(vbat) : -1;
 
+		/* Once per plug-in: a source that sags at 500 mA keeps what it had. */
+		if (!online) {
+			raised = 0;
+		} else if (!raised) {
+			int limit = pmu_read(PMU_USB_LIMIT);
+
+			if (limit >= 0 && limit_ma(limit & 0x1f) < 500) {
+				usb_limit(500);
+				fflush(stdout);
+			}
+			raised = 1;
+		}
 		if (online && charge >= 0 && (charge & (CHARGE_TIMEOUT | CHARGE_END)) &&
 		    mv > 0 && mv < 4100) {
 			if (!stopped)
