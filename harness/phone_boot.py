@@ -469,6 +469,11 @@ def deploy_battery(run):
         'iphone4-usb', 'nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 '
         '</dev/null & sleep 2; cat /run/power_supply/battery/status').returncode == 0
     log(run, 'battery_started' if started else 'battery_failed')
+    # restore_identity set the phone's time from this computer; keep its
+    # offset from the PMU's own counter for boots without the laptop.
+    clock = ssh('iphone4-usb', '/usr/sbin/n90-battery clock save')
+    log(run, 'clock_saved' if clock.returncode == 0 else 'clock_unsaved',
+        detail=(clock.stdout or clock.stderr).decode().strip()[-200:])
 
 
 WIFI = PRIVATE / 'wifi'
