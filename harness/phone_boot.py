@@ -17,11 +17,13 @@ import argparse
 from datetime import datetime, timezone
 import fcntl
 import hashlib
+import io
 import json
 import os
 from pathlib import Path
 import subprocess as sp
 import sys
+import tarfile
 import tempfile
 import time
 
@@ -391,6 +393,7 @@ def boot(run, record):
     deploy_display(run)
     deploy_touch(run)
     deploy_battery(run)
+    deploy_wifi(run)
     deploy_keep(run)
     return boot_id
 
@@ -466,6 +469,65 @@ def deploy_battery(run):
         'iphone4-usb', 'nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 '
         '</dev/null & sleep 2; cat /run/power_supply/battery/status').returncode == 0
     log(run, 'battery_started' if started else 'battery_failed')
+
+
+WIFI = PRIVATE / 'wifi'
+WIFI_MODULES = ('libarc4.ko', 'cfg80211.ko', 'brcmutil.ko', 'brcmfmac.ko',
+                'brcmfmac-wcc.ko', 'sdhci-pltfm.ko', 'sdhci-s5l8930.ko')
+
+
+def wifi_networks():
+    """Known networks for the phone as "SSID<TAB>PMK" lines.
+
+    Boris keeps "SSID<TAB>password" lines in the private networks file. Only
+    the WPA2 key derived from each password (PBKDF2-SHA1, 4096 rounds, the
+    SSID as salt) goes to the phone.
+    """
+    path = WIFI / 'networks'
+    lines = []
+    if path.exists():
+        for line in path.read_text().splitlines():
+            ssid, tab, password = line.partition('\t')
+            if tab and ssid and 8 <= len(password) <= 63:
+                key = hashlib.pbkdf2_hmac('sha1', password.encode(), ssid.encode(), 4096, 32)
+                lines.append(f'{ssid}\t{key.hex()}\n')
+    return ''.join(lines)
+
+
+def deploy_wifi(run):
+    """Wi-Fi (kernel/n90-wifi): the patched driver, Apple's firmware, the
+    n90-wifi tool, its keeper and the known networks.
+
+    Files only: n90-wifi-keep, which keep starts, loads the driver on the
+    phone, so a driver failure costs Wi-Fi rather than the boot. The NVRAM
+    gets the phone's fixed private MAC address; Apple's lacks one. Not a
+    boot failure.
+    """
+    out = ROOT / 'output/wifi'
+    sources = {f'opt/wifi/{m}': out / m for m in WIFI_MODULES}
+    sources['usr/sbin/n90-wifi'] = out / 'n90-wifi'
+    sources['usr/sbin/n90-wifi-keep'] = ROOT / 'kernel/n90-wifi/wifi-keep.sh'
+    sources['lib/firmware/brcm/brcmfmac4329-sdio.bin'] = WIFI / 'bachelor.bin'
+    missing = [str(path) for path in sources.values() if not path.exists()]
+    if missing or not (WIFI / 'bachelor-murata.txt').exists() or not (WIFI / 'macaddr').exists():
+        log(run, 'wifi_skipped', reason='missing ' + ', '.join(missing or ['NVRAM or MAC']))
+        return
+    nvram = ((WIFI / 'bachelor-murata.txt').read_text().rstrip('\n') +
+             f"\nmacaddr={(WIFI / 'macaddr').read_text().strip()}\n").encode()
+    blob = io.BytesIO()
+    with tarfile.open(fileobj=blob, mode='w') as tar:
+        def add(name, data, mode):
+            info = tarfile.TarInfo(name)
+            info.size, info.mode, info.mtime = len(data), mode, int(time.time())
+            tar.addfile(info, io.BytesIO(data))
+        for name, path in sources.items():
+            add(name, path.read_bytes(), 0o755 if name.startswith('usr/') else 0o644)
+        add('lib/firmware/brcm/brcmfmac4329-sdio.txt', nvram, 0o644)
+        add('run/wifi/networks', wifi_networks().encode(), 0o600)
+    sent = ssh('iphone4-usb', 'mkdir -p /run/wifi && chmod 700 /run/wifi && tar -xf - -C /',
+               stdin=blob.getvalue(), timeout=120)
+    log(run, 'wifi_installed' if sent.returncode == 0 else 'wifi_failed',
+        networks=wifi_networks().count('\n'), detail=sent.stderr.decode()[-200:])
 
 
 def tune_scheduler(run):

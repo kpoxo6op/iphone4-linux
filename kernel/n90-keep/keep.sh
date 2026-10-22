@@ -3,14 +3,23 @@
 #
 # Busybox init respawns this script (an inittab entry added at boot), so it
 # survives too. Every 2 s it checks Soy, the touch driver, the battery
-# reader and the watchdog kicker. One that has been gone for 6 s is started
+# reader, the Wi-Fi keeper and the watchdog kicker. One that has been gone for 6 s is started
 # the same way the boot starts it. Deploy tools that stop a service on
 # purpose write an expiry time (epoch seconds) to /run/keep/hold-NAME first.
 # When Soy needs a third restart within two minutes, the release before the
 # current one becomes current again.
+#
+# keep also takes over from the kernel's panic_on_oops. An oops leaves the
+# kernel damaged; rebooting at once would lose the oops message, because the
+# laptop collects the kernel log over the network. keep notes the oops in the
+# journal and, 30 s later, restarts the phone if it is on USB power, where
+# the laptop boots it again from DFU mode. On battery a damaged phone that
+# still shows pages is more use than one waiting in DFU mode.
+# /run/keep/hold-oops pauses this.
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 LOG=/run/keep/keep.log
 mkdir -p /run/keep
+echo 0 > /proc/sys/kernel/panic_on_oops
 
 say() { echo "$(date '+%F %T') $*" >> "$LOG"; }
 # A restart also goes in Soy's journal, which the laptop collects.
@@ -86,6 +95,10 @@ start() {
 		nohup /usr/sbin/n90-wdt 60 10 >/run/n90-wdt.log 2>&1 </dev/null &
 		echo $! > /run/keep/wdt.pid
 		say "started watchdog kicker" ;;
+	wifi)
+		nohup /usr/sbin/n90-wifi-keep >/dev/null 2>&1 </dev/null &
+		echo $! > /run/keep/wifi.pid
+		say "started Wi-Fi keeper" ;;
 	esac
 }
 
@@ -95,15 +108,39 @@ installed() {
 	touch) [ -x /opt/n90-touch/n90-touch ] ;;
 	battery) [ -x /usr/sbin/n90-battery ] ;;
 	wdt) [ -x /usr/sbin/n90-wdt ] ;;
+	wifi) [ -x /usr/sbin/n90-wifi-keep ] ;;
 	esac
 }
 
+# The kernel sets taint bit 7 (TAINT_DIE) on an oops.
+oops_at=
+check_oops() {
+	t=; read -r t 2>/dev/null < /proc/sys/kernel/tainted
+	case "$t" in ''|*[!0-9]*) return ;; esac
+	[ $((t & 128)) -ne 0 ] || return
+	now=$(date +%s)
+	if [ -z "$oops_at" ]; then
+		oops_at=$now
+		say "kernel oops"
+		echo "{\"t\":$now,\"e\":\"oops\"}" >> /run/soy/journal.jsonl
+	fi
+	# The oops may have taken the USB network down, so ask the PMU too.
+	u=; read -r u 2>/dev/null < /run/power_supply/usb/online
+	c=; read -r c 2>/dev/null < /sys/class/net/usb0/carrier
+	if { [ "$u" = 1 ] || [ "$c" = 1 ]; } && [ $((now - oops_at)) -ge 30 ] &&
+	    ! held oops; then
+		say "restarting after the oops"
+		echo b > /proc/sysrq-trigger
+	fi
+}
+
 comm_soy=soy comm_touch=n90-touch comm_battery=n90-battery comm_wdt=n90-wdt
+comm_wifi=n90-wifi-keep
 
 say "keep started"
-missing_soy=0 missing_touch=0 missing_battery=0 missing_wdt=0
+missing_soy=0 missing_touch=0 missing_battery=0 missing_wdt=0 missing_wifi=0
 while :; do
-	for s in wdt soy touch battery; do
+	for s in wdt soy touch battery wifi; do
 		eval "m=\$missing_$s"
 		eval "comm=\$comm_$s"
 		if ! installed "$s" || held "$s" || alive "$s" "$comm"; then
@@ -117,5 +154,6 @@ while :; do
 		fi
 		eval "missing_$s=\$m"
 	done
+	check_oops
 	sleep 2
 done

@@ -169,32 +169,6 @@ def sync_scenes(value):
            check=False, capture_output=True)
 
 
-def pull_journal(value):
-    """Copy the phone's journal of what it showed here about once a minute.
-
-    soy/tools/scene.py journal pull keeps daily files under private/journal;
-    `scene.py journal` summarises a day for Claude or Boris.
-    """
-    if (value['status'] != 'linux_usb' or
-            value.get('identity', {}).get('HardwareModel') != 'N90AP'):
-        return
-    state = DATA / 'private/journal/state.json'
-    if state.exists() and time.time() - state.stat().st_mtime < 55:
-        return
-    with open(DATA / 'usb-operation.lock', 'w') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            return
-    state.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    state.touch()
-    sp.run(['systemd-run', '--user', '--no-block', '--collect', '--quiet',
-            '--unit=iphone4-linux-journal', '-p', 'TimeoutStartSec=2min',
-            sys.executable, str(control.ROOT / 'soy/tools/scene.py'), '--host',
-            'iphone4-usb', 'journal', 'pull'],
-           check=False, capture_output=True)
-
-
 def check():
     cfg = json.loads((control.STATE / 'settings.json').read_text())
     targetfile = DATA / 'private/device-policy.json'
@@ -227,7 +201,6 @@ def check():
     phone_reconnect.check(value, DATA)
     start_boot(value)
     sync_scenes(value)
-    pull_journal(value)
     print(json.dumps({'status': value['status'], 'changed': changed}))
 
 
@@ -249,8 +222,19 @@ def install():
         f'WorkingDirectory={control.ROOT}\n'
         f'ExecStart=/usr/bin/python3 {Path(__file__).resolve().parent / "phone_boot.py"} run\n'
         'TimeoutStartSec=45min\nMemoryMax=3G\nUMask=0077\n')
+    # Logs and Soy's journal, live over USB or Tailscale (phone_follow.py).
+    (units / 'iphone4-linux-follow.service').write_text(
+        '[Unit]\nDescription=Follow the iPhone\'s logs over USB or Tailscale\n'
+        '[Service]\n'
+        f'WorkingDirectory={control.ROOT}\n'
+        f'ExecStart=/usr/bin/python3 {Path(__file__).resolve().parent / "phone_follow.py"} run\n'
+        'Restart=always\nRestartSec=10\nMemoryMax=128M\nCPUQuota=10%\nUMask=0077\n'
+        'NoNewPrivileges=true\n'
+        '[Install]\nWantedBy=default.target\n')
     sp.run(['systemctl', '--user', 'daemon-reload'], check=True)
     sp.run(['systemctl', '--user', 'enable', '--now', 'iphone4-linux-phone.timer'], check=True)
+    sp.run(['systemctl', '--user', 'enable', '--now', 'iphone4-linux-follow.service'],
+           check=True)
 
 
 if __name__ == '__main__':

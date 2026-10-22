@@ -48,6 +48,7 @@ accurate source of percentage.
 make                      # output/battery/n90-battery
 n90-battery probe         # supply register, power NVRAM, every ADC channel
 n90-battery serve         # files under /run/power_supply every 10 s
+n90-battery poweroff      # switch the phone off through the PMU
 ```
 
 `serve` writes power_supply-style files every 10 s, which Soy reads like a
@@ -60,6 +61,19 @@ voltage, and logs each charger restart to `/run/n90-battery.log`.
 
 Reads use one combined I2C transfer, so the backlight driver and
 `n90-touch` cannot move the PMU register pointer in between.
+
+## Low battery
+
+On battery, three readings in a row (30 s) under 3.45 V, about 2 % on the
+open-circuit curve, make `serve` switch the phone off before the battery
+browns it out: it notes the shutdown in Soy's journal, waits 20 s so the
+laptop's follower can copy the logs if it can reach the phone, and calls the
+power-off unless USB power came back meanwhile. Power then starts the phone
+into DFU mode, where the laptop boots it.
+
+`poweroff` is openiBoot's `pmu_poweroff()` for the A4: mask the wake events
+in `0x0c`–`0x11`, drive the PMU GPIO outputs low, set `0x12` (OOCSHDWN).
+Neither the threshold nor the power-off has run on the phone yet.
 
 ## Next
 

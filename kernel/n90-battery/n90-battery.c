@@ -31,10 +31,19 @@
  *                    off if VBUS sags by more than a tenth
  *   serve [dir]      publish readings every 10 s as power_supply-style
  *                    files under dir (default /run/power_supply)
+ *   poweroff         switch the phone off through the PMU
  *
  * serve restarts the charger the same way, publishes the voltage and the
  * charge state, and publishes a percentage estimated from the voltage only
  * on battery: while charging the voltage reads high.
+ *
+ * Low battery: on battery, three readings in a row (30 s) under 3.45 V,
+ * about 2 % left, switch the phone off before the battery browns it out.
+ * serve notes it in Soy's journal and waits 20 s so the laptop can copy the
+ * logs if it can reach the phone. Power then starts the phone into DFU mode.
+ *
+ * poweroff is openiBoot's pmu_poweroff() for the A4: mask the wake events
+ * in 0x0c-0x11, drive the PMU GPIO outputs low, set 0x12 (OOCSHDWN).
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -66,6 +75,11 @@
 #define ADC_VBAT        4
 #define ADC_ICH         1
 #define ADC_VBUS        15
+#define PMU_WAKE_MASKS  0x0c
+#define PMU_GPIO_FIRST  0x50
+#define PMU_GPIO_LAST   0x5a
+#define PMU_SHUTDOWN    0x12
+#define LOW_MV          3450
 
 static int i2c = -1;
 
@@ -256,10 +270,47 @@ static int restart_charger(void)
 	return pmu_write(PMU_CHARGER, v);
 }
 
+/* openiBoot plat-a4/pmu.c pmu_write_oocshdwn(1). Does not return. */
+static void poweroff(void)
+{
+	static const uint8_t masks[] = { PMU_WAKE_MASKS, 0xc0, 0xff, 0xbf, 0xff, 0xae, 0xff };
+	struct i2c_msg msg = { .addr = PMU_ADDR, .flags = 0, .len = sizeof masks,
+			       .buf = (uint8_t *)masks };
+	struct i2c_rdwr_ioctl_data data = { .msgs = &msg, .nmsgs = 1 };
+	int reg;
+
+	sync();
+	pmu_read(0x01);
+	ioctl(i2c, I2C_RDWR, &data);
+	for (reg = PMU_GPIO_FIRST; reg <= PMU_GPIO_LAST; reg++) {
+		int v = pmu_read(reg);
+
+		/* Outputs (mode 3 and up) that are driven high. */
+		if (v >= 0 && (v & 0xe0) > 0x5f && (v & 0x02))
+			pmu_write(reg, v & 0xfd);
+	}
+	pmu_write(PMU_SHUTDOWN, 1);
+	for (;;)
+		sleep(1);
+}
+
+static void note_shutdown(long mv)
+{
+	FILE *f = fopen("/run/soy/journal.jsonl", "a");
+
+	if (f) {
+		fprintf(f, "{\"t\":%ld,\"e\":\"shutdown\",\"why\":\"battery\",\"mv\":%ld}\n",
+			(long)time(NULL), mv);
+		fclose(f);
+	}
+	fprintf(stderr, "battery at %ld mV: switching off in 20 s\n", mv);
+}
+
 static void serve(const char *root)
 {
 	char battery[200], usb[200], path[256];
 	time_t stopped = 0, restarted = 0;
+	int low = 0;
 
 	snprintf(battery, sizeof battery, "%s/battery", root);
 	snprintf(usb, sizeof usb, "%s/usb", root);
@@ -311,6 +362,14 @@ static void serve(const char *root)
 		    charging ? "Charging\n" :
 		    charge >= 0 && (charge & CHARGE_END) && mv >= 4100 ? "Full\n" :
 		    "Not charging\n", 0);
+		low = supply >= 0 && !online && mv > 0 && mv < LOW_MV ? low + 1 : 0;
+		if (low >= 3) {
+			note_shutdown(mv);
+			sleep(20);
+			if (!(pmu_read(PMU_SUPPLY) & PMU_SUPPLY_USB))
+				poweroff();
+			low = 0;
+		}
 		sleep(10);
 	}
 }
@@ -318,7 +377,7 @@ static void serve(const char *root)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | serve [dir]\n");
+		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | serve [dir] | poweroff\n");
 		return 2;
 	}
 	i2c = open("/dev/i2c-0", O_RDWR);
@@ -332,6 +391,8 @@ int main(int argc, char **argv)
 		return usb_limit(atoi(argv[2]));
 	else if (!strcmp(argv[1], "serve"))
 		serve(argc > 2 ? argv[2] : "/run/power_supply");
+	else if (!strcmp(argv[1], "poweroff"))
+		poweroff();
 	else
 		return 2;
 	return 0;
