@@ -40,13 +40,15 @@ a known network.
 ## Known networks
 
 Boris keeps `SSID<TAB>password` lines in
-`.runtime/phone/private/wifi/networks` on the laptop, out of Git. The boot
-pass derives each network's WPA2 key (PBKDF2-SHA1, 4096 rounds, the SSID as
-salt) and sends only that to `/run/wifi/networks` on the phone. The firmware
-does the four-way handshake itself (brcmfmac reports
-`NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK`), so the phone needs no
-supplicant. The chip only does 2.4 GHz: a Pixel hotspot needs Extend
-compatibility on, with WPA2 or WPA2/WPA3 security.
+`.runtime/phone/private/wifi/networks` on the laptop, out of Git, in order
+of preference: the phone joins the first one in range, so home Wi-Fi comes
+before the Pixel hotspot. Names are case-sensitive, and the key depends on
+the exact name. The boot pass derives each network's WPA2 key (PBKDF2-SHA1,
+4096 rounds, the SSID as salt) and sends only that to `/run/wifi/networks`
+on the phone. The firmware does the four-way handshake itself (brcmfmac
+reports `NL80211_EXT_FEATURE_4WAY_HANDSHAKE_STA_PSK`), so the phone needs
+no supplicant. The chip only does 2.4 GHz: a phone hotspot has to offer
+that band, with WPA2 or WPA2/WPA3 security.
 
 Apple's NVRAM has no `macaddr`; iOS adds the phone's own from syscfg.
 Without one the firmware stops with `Failed to init wireless side, err: 21`.
@@ -83,6 +85,8 @@ Each step was found on the phone with the diagnostics patch.
    so a connect never finished and every later scan was refused
    (`Connecting: status (3)`). The patch hands them to the one interface
    and logs each (`event 46 status 6 reason 0: bsscfg 255, using 0`).
+   `n90-wifi` also drops a connect the firmware leaves unanswered for 30 s,
+   so scans keep working whatever the firmware does.
 
 ## Status
 
@@ -93,6 +97,8 @@ Each step was found on the phone with the diagnostics patch.
 | Scan | 6 networks on channels 1, 6, 11, strongest at -36 dBm |
 | Join | Home network (WPA2, channel 1, -37 dBm) 3 s after `wlan0` came up |
 | DHCP and Internet | Lease from the home router; ping, DNS, IPv6 and Tailscale work over Wi-Fi, with peers reached directly on the LAN |
+| Pixel hotspot | Joined in 3 s (2.4 GHz, WPA2), lease and Internet over it |
+| Changing networks | Unplugged, home Wi-Fi → hotspot → home: the laptop's SSH session over Tailscale and the live kernel log carried on throughout |
 | Repeated loads | Clean after the block reset |
 
 Still open: the bus runs at 12 MHz, one block per transfer

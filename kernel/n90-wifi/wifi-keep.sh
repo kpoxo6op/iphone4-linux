@@ -7,8 +7,9 @@
 # driver happens here, once per boot and off the boot pass's path, so a
 # failure costs Wi-Fi, not the boot.
 #
-# While wlan0 is not on a network: scan, join the strongest known network,
-# and hold a DHCP lease on it. With nothing known in range the scans back
+# While wlan0 is not on a network: scan, join the first known network in
+# range (the file is in Boris's order of preference), and hold a DHCP lease
+# on it. With nothing known in range the scans back
 # off from 20 s to 2 min. Routes through a link that is down are ignored,
 # so the USB cable's default route stops mattering once it is unplugged.
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin

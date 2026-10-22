@@ -14,9 +14,9 @@
  *   scan [if]                  scan and list networks, strongest first
  *   connect SSID [if]          join a WPA2-PSK network; the PMK, 64 hex
  *                              digits, comes on stdin, not the command line
- *   join FILE [if]             scan and join the strongest network listed
- *                              in FILE as "SSID<TAB>PMK" lines; exit 3 when
- *                              none is in range
+ *   join FILE [if]             scan and join the first network listed in
+ *                              FILE as "SSID<TAB>PMK" lines that is in
+ *                              range; exit 3 when none is
  *   link [if]                  the network wlan0 is on, if any
  *   disconnect [if]
  */
@@ -409,6 +409,21 @@ static int hexpmk(const char *hex, unsigned char *pmk)
 	return 0;
 }
 
+static int disconnect(int fd, int ifindex)
+{
+	struct msg m;
+	int err;
+
+	start(&m, family, NL80211_CMD_DISCONNECT, 0);
+	put_u32(&m, NL80211_ATTR_IFINDEX, ifindex);
+	err = talk(fd, &m, NULL, NULL);
+	if (err && err != -ENOTCONN) {
+		fprintf(stderr, "disconnect: %s\n", strerror(-err));
+		return 1;
+	}
+	return 0;
+}
+
 static int connect_psk(int fd, int ifindex, const char *ssid, const char *hex)
 {
 	struct nlattr *tb[NL80211_ATTR_MAX + 1];
@@ -451,66 +466,55 @@ static int connect_psk(int fd, int ifindex, const char *ssid, const char *hex)
 			*(uint16_t *)DATA(tb[NL80211_ATTR_STATUS_CODE]));
 	else if (cmd == NL80211_CMD_CONNECT && tb[NL80211_ATTR_TIMED_OUT])
 		fprintf(stderr, "timed out\n");
-	else
-		fprintf(stderr, cmd ? "disconnected\n" : "no answer within 30 s\n");
+	else if (cmd)
+		fprintf(stderr, "disconnected\n");
+	else {
+		/* Drop the attempt, or brcmf would refuse scans until a reload. */
+		fprintf(stderr, "no answer within 30 s\n");
+		disconnect(fd, ifindex);
+	}
 	return 1;
 }
 
+/*
+ * Join the first network in FILE that is in range. Boris lists them in
+ * order of preference, home Wi-Fi before the phone's hotspot.
+ */
 static int join(int fd, int ifindex, const char *file)
 {
 	static struct bss_list l;
 	char line[160];
 	FILE *f;
-	int i, tried = 0;
+	int i, tried = 0, joined = 0;
 
 	if (do_scan(fd, ifindex, &l))
 		return 1;
-	for (i = 0; i < l.n; i++) {
-		f = fopen(file, "r");
-		if (!f) {
-			perror(file);
-			return 1;
-		}
-		while (fgets(line, sizeof(line), f)) {
-			char *tab = strchr(line, '\t');
-
-			line[strcspn(line, "\r\n")] = 0;
-			if (!tab || !l.b[i].ssid[0])
-				continue;
-			*tab = 0;
-			if (strcmp(line, l.b[i].ssid))
-				continue;
-			fclose(f);
-			tried = 1;
-			if (!connect_psk(fd, ifindex, line, tab + 1)) {
-				memset(line, 0, sizeof(line));
-				return 0;
-			}
-			memset(line, 0, sizeof(line));
-			goto next;
-		}
-		fclose(f);
-next:
-		;
+	f = fopen(file, "r");
+	if (!f) {
+		perror(file);
+		return 1;
 	}
+	while (!joined && fgets(line, sizeof(line), f)) {
+		char *tab = strchr(line, '\t');
+
+		line[strcspn(line, "\r\n")] = 0;
+		if (!tab || tab == line)
+			continue;
+		*tab = 0;
+		for (i = 0; i < l.n && strcmp(line, l.b[i].ssid); i++)
+			;
+		if (i == l.n)
+			continue;
+		tried = 1;
+		joined = !connect_psk(fd, ifindex, line, tab + 1);
+	}
+	memset(line, 0, sizeof(line));
+	fclose(f);
+	if (joined)
+		return 0;
 	if (!tried)
 		printf("no known network in range\n");
 	return tried ? 1 : 3;
-}
-
-static int disconnect(int fd, int ifindex)
-{
-	struct msg m;
-	int err;
-
-	start(&m, family, NL80211_CMD_DISCONNECT, 0);
-	put_u32(&m, NL80211_ATTR_IFINDEX, ifindex);
-	err = talk(fd, &m, NULL, NULL);
-	if (err && err != -ENOTCONN) {
-		fprintf(stderr, "disconnect: %s\n", strerror(-err));
-		return 1;
-	}
-	return 0;
 }
 
 int main(int argc, char **argv)
