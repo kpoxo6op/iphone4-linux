@@ -1169,6 +1169,16 @@ static void read_keys(void) {
     keyfd = -1;
   }
 }
+/* /run/soy/blanked tells n90-touch to poll the controller less often: with
+ * the screen off a touch only has to wake it. */
+static void mark_blanked(int on) {
+  char flag[600];
+  path(flag, sizeof flag, rundir, "blanked");
+  if (on)
+    close(open(flag, O_WRONLY | O_CREAT | O_CLOEXEC, 0644));
+  else
+    unlink(flag);
+}
 static void wake_display(const char *why) {
   lv_display_trigger_activity(display);
   if (!blank_screen)
@@ -1176,6 +1186,7 @@ static void wake_display(const char *why) {
   note("\"e\":\"wake\",\"why\":\"%s\"", why);
   lv_obj_delete(blank_screen);
   blank_screen = NULL;
+  mark_blanked(0);
   lv_timer_resume(lv_display_get_refr_timer(display));
   lv_timer_ready(lv_display_get_refr_timer(display));
   lv_obj_invalidate(lv_screen_active());
@@ -1212,6 +1223,7 @@ static void sleep_display(const char *why) {
   lv_refr_now(display);
   lv_timer_pause(lv_display_get_refr_timer(display));
   set_backlight(0);
+  mark_blanked(1);
 }
 static int set_idle_timeout(const char *s) {
   if (!*s || strspn(s, "0123456789") != strlen(s))
@@ -1766,6 +1778,7 @@ int main(int argc, char **argv) {
     return 2;
   path(p, sizeof p, rundir, "journal.jsonl");
   journal = fopen(p, "ae");
+  mark_blanked(0); /* a renderer that crashed while blanked left the flag */
   note("\"e\":\"start\",\"scene\":\"%s\",\"scenes\":%d", scenes[current].id,
        count);
   snprintf(noted_scene, sizeof noted_scene, "%s", scenes[current].id);
@@ -1890,7 +1903,9 @@ int main(int argc, char **argv) {
       status();
       status_end = now();
       status_ms = (status_end - began) * 1000;
-      nextstatus = t + .1;
+      /* Ten times a second for tools that watch motion; while the screen is
+       * blanked nothing moves, and writing it was most of Soy's idle CPU. */
+      nextstatus = t + (blank_screen ? 2 : .1);
     }
     struct pollfd fds[10] = {{ctl, POLLIN, 0}};
     int nfds = 1 + soy_input_pollfds(fds + 1, 8);
@@ -1902,8 +1917,10 @@ int main(int argc, char **argv) {
     /* A refresh that exceeded its period is already due. Do not add a
      * mandatory extra millisecond to every late frame. Idle timers still wait.
      */
-    uint32_t wait = blank_screen ? 100 : lv_timer_get_time_to_next();
-    poll(fds, nfds, blank_screen ? 100 : clamp(wait, 0, 8));
+    /* Blanked, only input, the control FIFO or a signal has work for us;
+     * the status file waits up to a second. */
+    uint32_t wait = blank_screen ? 1000 : lv_timer_get_time_to_next();
+    poll(fds, nfds, blank_screen ? 1000 : clamp(wait, 0, 8));
     if (keyslot >= 0 && fds[keyslot].revents & (POLLIN | POLLHUP | POLLERR))
       read_keys();
     for (int i = 1; i < (keyslot >= 0 ? keyslot : nfds); i++)
