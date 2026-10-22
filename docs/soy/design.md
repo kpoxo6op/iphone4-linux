@@ -54,6 +54,13 @@ previous/next hit regions. Its dots indicate position; they are not tiny
 individual buttons. No arrows, scene counters or navigation instructions
 surround it.
 
+The volume buttons turn the page without touching the glass: down shows the
+next screenful and up the one before, each keeping the last two lines in
+view, and past either end of a scene they move to the neighbouring scene.
+One thumb is enough, with gloves, in the rain or with a camera in the other
+hand. On 22 October a press slid the page 647 px in 19 frames, worst
+interval 11.2 ms. Home and Power wake the screen; Power also sleeps it.
+
 Reading position belongs to each scene. Returning to a post should not lose
 your place. The first version has no settings that pretend to work.
 
