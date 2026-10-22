@@ -32,6 +32,8 @@
  *   serve [dir]      publish readings every 10 s as power_supply-style
  *                    files under dir (default /run/power_supply)
  *   poweroff         switch the phone off through the PMU
+ *   clock [save|load] the PMU's real-time clock: show it, store its offset
+ *                    from the system time, or set the system time from it
  *
  * serve restarts the charger the same way, publishes the voltage and the
  * charge state, and publishes a percentage estimated from the voltage only
@@ -44,6 +46,13 @@
  *
  * poweroff is openiBoot's pmu_poweroff() for the A4: mask the wake events
  * in 0x0c-0x11, drive the PMU GPIO outputs low, set 0x12 (OOCSHDWN).
+ *
+ * Clock: 0x4c-0x4f count seconds, little-endian, and keep counting while the
+ * phone is off (measured +20 in 20.04 s on 22 October; 151,000 s then, so
+ * it counts from some reset rather than 1970). No time offset turned up in
+ * the PMU, so `clock save` keeps ours, epoch minus counter, in general-
+ * purpose bytes 0x84-0x87 with 0x5a in 0x88. openiBoot names the iBoot use
+ * of 0x80-0x83 and 0x8f, and iBoot records the boot voltage in 0x8d-0x8e.
  */
 #include <errno.h>
 #include <fcntl.h>
@@ -55,6 +64,7 @@
 #include <string.h>
 #include <sys/ioctl.h>
 #include <sys/stat.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -80,6 +90,10 @@
 #define PMU_GPIO_LAST   0x5a
 #define PMU_SHUTDOWN    0x12
 #define LOW_MV          3450
+#define PMU_RTC         0x4c
+#define PMU_RTC_OFFSET  0x84
+#define PMU_RTC_MAGIC   0x88
+#define RTC_MAGIC       0x5a
 
 static int i2c = -1;
 
@@ -294,6 +308,73 @@ static void poweroff(void)
 		sleep(1);
 }
 
+static long rtc_seconds(void)
+{
+	uint8_t b[4];
+
+	if (pmu_read_n(PMU_RTC, b, 4))
+		return -1;
+	return b[0] | b[1] << 8 | b[2] << 16 | (long)b[3] << 24;
+}
+
+static long rtc_offset(void)
+{
+	uint8_t b[4];
+
+	if (pmu_read(PMU_RTC_MAGIC) != RTC_MAGIC || pmu_read_n(PMU_RTC_OFFSET, b, 4))
+		return -1;
+	return b[0] | b[1] << 8 | b[2] << 16 | (long)b[3] << 24;
+}
+
+static int clock_cmd(const char *what)
+{
+	long counter = rtc_seconds(), offset = rtc_offset(), now = time(NULL);
+	char text[64];
+	time_t t;
+	int i;
+
+	if (counter < 0) {
+		fprintf(stderr, "cannot read the PMU clock\n");
+		return 1;
+	}
+	if (!strcmp(what, "save")) {
+		if (now < 1700000000) {
+			fprintf(stderr, "the system time is not set\n");
+			return 1;
+		}
+		offset = now - counter;
+		for (i = 0; i < 4; i++)
+			pmu_write(PMU_RTC_OFFSET + i, (offset >> (8 * i)) & 0xff);
+		pmu_write(PMU_RTC_MAGIC, RTC_MAGIC);
+		if (rtc_offset() != offset) {
+			fprintf(stderr, "the offset did not stick\n");
+			return 1;
+		}
+	} else if (!strcmp(what, "load")) {
+		struct timeval tv = { .tv_sec = counter + offset };
+
+		if (offset < 0) {
+			fprintf(stderr, "no saved offset\n");
+			return 1;
+		}
+		if (settimeofday(&tv, NULL)) {
+			perror("settimeofday");
+			return 1;
+		}
+		now = tv.tv_sec;
+	}
+	printf("pmu counter %ld s", counter);
+	if (offset >= 0) {
+		t = counter + offset;
+		strftime(text, sizeof text, "%Y-%m-%d %H:%M:%S UTC", gmtime(&t));
+		printf(", clock %s, system %+ld s", text, now - (long)t);
+	} else {
+		printf(", no saved offset");
+	}
+	printf("\n");
+	return 0;
+}
+
 static void note_shutdown(long mv)
 {
 	FILE *f = fopen("/run/soy/journal.jsonl", "a");
@@ -377,7 +458,8 @@ static void serve(const char *root)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | serve [dir] | poweroff\n");
+		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | serve [dir] | poweroff | "
+			"clock [save|load]\n");
 		return 2;
 	}
 	i2c = open("/dev/i2c-0", O_RDWR);
@@ -393,6 +475,8 @@ int main(int argc, char **argv)
 		serve(argc > 2 ? argv[2] : "/run/power_supply");
 	else if (!strcmp(argv[1], "poweroff"))
 		poweroff();
+	else if (!strcmp(argv[1], "clock"))
+		return clock_cmd(argc > 2 ? argv[2] : "");
 	else
 		return 2;
 	return 0;

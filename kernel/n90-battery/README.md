@@ -62,6 +62,25 @@ voltage, and logs each charger restart to `/run/n90-battery.log`.
 Reads use one combined I2C transfer, so the backlight driver and
 `n90-touch` cannot move the PMU register pointer in between.
 
+## Clock
+
+The PMU counts seconds in `0x4c`–`0x4f` (little-endian) and keeps counting
+while the phone is off: +20 in 20.04 s on 22 October. It read 151,235 s
+then, so it counts from some PMU reset rather than 1970, and no offset to
+the real time turned up among the PMU's registers. The boot pass sets the
+phone's time from the laptop and then runs `n90-battery clock save`, which
+keeps epoch minus counter in the PMU's general-purpose bytes `0x84`–`0x87`,
+marked with `0x5a` in `0x88` (openiBoot names iBoot's use of `0x80`–`0x83`
+and `0x8f`; iBoot records the boot voltage in `0x8d`–`0x8e`). A boot without
+the laptop can then run `n90-battery clock load` to set the system time.
+The offset lasts as long as the battery keeps the PMU powered.
+
+```sh
+n90-battery clock         # pmu counter 151235 s, clock 2026-10-22 01:34:22 UTC, system +0 s
+n90-battery clock save    # store the offset from the system time
+n90-battery clock load    # set the system time from the PMU
+```
+
 ## Low battery
 
 On battery, three readings in a row (30 s) under 3.45 V, about 2 % on the
