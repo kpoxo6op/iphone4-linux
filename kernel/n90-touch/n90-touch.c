@@ -996,7 +996,7 @@ static void report(const struct contact *c, int n)
 static int serve(const char *fw, const char *cal)
 {
 	struct contact c[16];
-	int errors = 0, active = 0;
+	int errors = 0, active = 0, blanked = 0, blank_checks = 0;
 	uint64_t last_frame = 0;
 
 	if (getenv("Z2_FLIP_X"))
@@ -1051,9 +1051,16 @@ static int serve(const char *fw, const char *cal)
 			/*
 			 * 1 ms while a gesture is live. 8 ms when idle: each wakeup
 			 * preempts the renderer, and the controller only scans every
-			 * 16 ms anyway.
+			 * 16 ms anyway. 50 ms while Soy has the screen blanked, where
+			 * a touch only has to wake it: 20 wakeups a second instead of
+			 * 125. Soy keeps /run/soy/blanked while blanked; it is checked
+			 * every pass while blanked and every 0.2 s otherwise.
 			 */
-			struct timespec ts = { 0, active ? 1000000 : 8000000 };
+			if (blanked || ++blank_checks >= 25) {
+				blank_checks = 0;
+				blanked = !active && !access("/run/soy/blanked", F_OK);
+			}
+			struct timespec ts = { 0, active ? 1000000 : blanked ? 50000000 : 8000000 };
 
 			if (active && now_us() - last_frame > 250000)
 				active = 0;

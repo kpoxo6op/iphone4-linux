@@ -52,6 +52,34 @@ and evdev input path. It does not introduce a second UI loop or framework.
 The [LVGL input documentation](https://docs.lvgl.io/9.3/details/main-modules/indev.html)
 and the pinned 9.6.0 input/display implementation informed wake suppression.
 
+## Idle power
+
+With the screen blanked the phone should do almost nothing. On 22 October,
+over a minute each with the screen blanked and the phone on USB:
+
+| | Busy CPU | Timer interrupts | Biggest users (CPU jiffies a minute) |
+|---|---|---|---|
+| Before | 5.5 % (13.6 % in minutes with a tailscaled rebind) | 258 a second | Soy 74, n90-touch 66, keep 41 |
+| After | 4.2 % | 111 a second | keep 41, n90-touch 16, Soy 8 |
+
+What changed:
+
+- Soy wrote `/run/soy/status.json` ten times a second even while blanked. It
+  now writes it every 2 s then, and sleeps up to a second between wakeups;
+  touches, buttons, the control FIFO and signals still wake it at once.
+- Soy keeps `/run/soy/blanked` while blanked. n90-touch then reads the
+  controller's ATN line every 50 ms instead of every 8 ms; a touch only has to
+  wake the screen.
+- The phone's DHCP client no longer rewrites routes on unchanged renewals,
+  which made tailscaled rebuild its connections every minute
+  ([kernel/n90-net](../../kernel/n90-net/README.md)).
+- Wi-Fi waits for the chip's interrupt instead of polling it 100 times a
+  second ([kernel/n90-wifi](../../kernel/n90-wifi/README.md)).
+
+The panel itself stays powered (only the backlight goes off), and the A4 runs
+at a fixed clock with no frequency scaling. Battery life on battery has not
+been measured yet; the journal's five-minute battery samples will give it.
+
 ## Verification
 
 `soy/tools/check_idle.py` exercises the real native process and rendered pixels
