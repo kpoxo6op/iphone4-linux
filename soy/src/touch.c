@@ -891,10 +891,20 @@ static int sheet_open_amount(void) {
   return clamp(sheet_kind == 1 ? sheet_height - scroll : scroll, 0,
                sheet_height);
 }
+/* Movement before a drag starts scrolling, so a tap is not a scroll. */
+#define SCROLL_LIMIT 14
 static void sheet_event(lv_event_t *e) {
   if (sheet_initializing || !sheet)
     return;
   lv_event_code_t c = lv_event_get_code(e);
+  if (getenv("SOY_DEBUG_SHEET") && c != LV_EVENT_DRAW_MAIN && c != LV_EVENT_DRAW_POST &&
+      c != LV_EVENT_DRAW_MAIN_BEGIN && c != LV_EVENT_DRAW_MAIN_END &&
+      c != LV_EVENT_DRAW_POST_BEGIN && c != LV_EVENT_DRAW_POST_END &&
+      c != LV_EVENT_COVER_CHECK && c != LV_EVENT_REFR_EXT_DRAW_SIZE &&
+      c != LV_EVENT_GET_SELF_SIZE && c != LV_EVENT_HIT_TEST)
+    fprintf(stderr, "sheet %.4f ev %d scroll %d open %d scrollobj %p target %p\n", now(), c,
+            (int)lv_obj_get_scroll_y(sheet), sheet_open_amount(),
+            (void *)lv_indev_get_scroll_obj(pointer), (void *)lv_event_get_target_obj(e));
   pace_scroll(e);
   if (sheet_picture &&
       (c == LV_EVENT_SCROLL_BEGIN || c == LV_EVENT_SCROLL_END)) {
@@ -953,6 +963,13 @@ static void outside_sheet(lv_event_t *e) {
 static void open_sheet(int kind, int from_edge) {
   if (sheet)
     return;
+  /* A finger that lands on the edge means to pull the sheet: let it follow
+   * from the first pixel. LVGL's 14 px start threshold also stayed in its
+   * running total, so the first time the sheet came back to closed under the
+   * finger and the finger turned round, the sheet sat still for 14 px (a
+   * 33 ms gap in the 60 fps check). The threshold returns at the next press. */
+  if (from_edge)
+    lv_indev_set_scroll_limit(pointer, 1);
   sheet_kind = kind;
   sheet_height = kind == 1   ? 480
                  : kind == 2 ? clamp(100 + count * 100, 300, 800)
@@ -1419,6 +1436,7 @@ static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
       pointer_pressed = 0;
     contacts_active = f.active;
     if (!f.active) {
+      lv_indev_set_scroll_limit(pointer, SCROLL_LIMIT);
       if (multi_latched)
         end_preview(!f.cancel && !multi_canceled);
       pointer_pressed = 0;
@@ -1788,7 +1806,7 @@ int main(int argc, char **argv) {
   pointer = lv_indev_create();
   lv_indev_set_type(pointer, LV_INDEV_TYPE_POINTER);
   lv_indev_set_read_cb(pointer, read_pointer);
-  lv_indev_set_scroll_limit(pointer, 14);
+  lv_indev_set_scroll_limit(pointer, SCROLL_LIMIT);
   lv_indev_set_scroll_throw(pointer, 12);
   lv_indev_set_long_press_time(pointer, 600);
   lv_indev_set_pinch_up_threshold(pointer, 1.05f);
