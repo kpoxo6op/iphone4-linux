@@ -77,6 +77,7 @@
 #include <signal.h>
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
+#include <math.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -104,6 +105,8 @@
 #define ADC_VBAT        4
 #define ADC_ICH         1
 #define ADC_VBUS        15
+#define ADC_TBAT        2
+#define ADC_TDEV1       11	/* 11-14: SIM, RF power amp, camera, A4 proximity */
 #define PMU_WAKE_MASKS  0x0c
 #define PMU_GPIO_FIRST  0x50
 #define PMU_GPIO_LAST   0x5a
@@ -120,6 +123,13 @@
 #define LAST_OOPS       0xa3
 #define LAST_OFF        0xa4
 #define LAST_REBOOT     0xa5
+#define LAST_HOT        0xa6
+/* Heartbeat while running, with what the phone was doing in the low bits. */
+#define LAST_ACTIVE     0xb0
+#define ACT_AWAKE       0x01	/* screen on */
+#define ACT_USB         0x02
+#define ACT_CHARGING    0x04
+#define ACT_HOT         0x08
 
 static int i2c = -1;
 
@@ -295,6 +305,22 @@ static int percent(long mv)
 static long vbat_mv(int counts)
 {
 	return 2500 + counts * 2000L / 4096;
+}
+
+/* The PMU's temperature channels: tbat (2) and tdev1-4 (11-14), which the
+ * N90 device tree places at the SIM, the RF power amp, the camera and the A4
+ * ("H3P proximity"). Each reads lower as it warms: on 24 October two busy
+ * processes for three minutes took tdev4 from 568 to 484 counts, the
+ * camera's from 565 to 516 and tbat from 712 to 705. The scale is assumed,
+ * not documented: 50 uA into a 10 kOhm NTC (B 3435 K) read against 2.5 V,
+ * as Dialog's other PMUs measure TBAT. It puts the idle phone on its
+ * charger at 28-34 °C, which is plausible; read the results as estimates
+ * within about 5 °C. */
+static double celsius(int counts)
+{
+	double ohm = counts * 2500.0 / 4096 / 0.05;
+
+	return counts > 0 ? 1 / (1 / 298.15 + log(ohm / 10000) / 3435) - 273.15 : -273;
 }
 
 /* What AppleD1815PMUPowerSource does after a charge timeout or end of charge
@@ -514,7 +540,11 @@ static int lastrun(void)
 	}
 	switch (b[0]) {
 	case LAST_RUNNING:
+	case LAST_ACTIVE ... LAST_ACTIVE + 0x0f:
 		why = "unexpected";
+		break;
+	case LAST_HOT:
+		why = "hot";
 		break;
 	case LAST_BATTERY:
 		why = "battery";
@@ -536,11 +566,19 @@ static int lastrun(void)
 	mv = b[3] ? 3000 + b[3] * 10L : -1;
 	t = at;
 	strftime(text, sizeof text, "%Y-%m-%d %H:%M UTC", gmtime(&t));
-	printf("last stop: %s, last seen %s, %ld mV\n", why, text, mv);
+	/* What a heartbeat said the phone was doing in its last minute. */
+	int act = (b[0] & 0xf0) == LAST_ACTIVE ? b[0] & 0x0f : -1;
+	char doing[96] = "";
+
+	if (act >= 0)
+		snprintf(doing, sizeof doing, "screen %s, %s%s%s",
+			 act & ACT_AWAKE ? "on" : "off", act & ACT_USB ? "on USB" : "on battery",
+			 act & ACT_CHARGING ? ", charging" : "", act & ACT_HOT ? ", hot" : "");
+	printf("last stop: %s, last seen %s, %ld mV%s%s\n", why, text, mv, *doing ? "; " : "", doing);
 	f = fopen("/run/soy/journal.jsonl", "a");
 	if (f) {
-		fprintf(f, "{\"t\":%ld,\"e\":\"last_stop\",\"why\":\"%s\",\"at\":%ld,\"mv\":%ld}\n",
-			now, why, at, mv);
+		fprintf(f, "{\"t\":%ld,\"e\":\"last_stop\",\"why\":\"%s\",\"at\":%ld,\"mv\":%ld,"
+			"\"doing\":\"%s\"}\n", now, why, at, mv, doing);
 		fclose(f);
 	}
 	pmu_write(PMU_LAST, LAST_REPORTED);
@@ -559,17 +597,43 @@ static void note_shutdown(long mv)
 	fprintf(stderr, "battery at %ld mV: switching off in 20 s\n", mv);
 }
 
+/* Too hot or too cold to charge, or warm enough to charge gently. */
+enum hold { HOLD_NONE, HOLD_WARM, HOLD_HOT, HOLD_COLD };
+static const char *hold_names[] = { "", "warm", "hot", "cold" };
+
+static void journal_charge(const char *what, double c)
+{
+	FILE *f = fopen("/run/soy/journal.jsonl", "a");
+
+	if (f) {
+		fprintf(f, "{\"t\":%ld,\"e\":\"charge\",\"hold\":\"%s\",\"celsius\":%.1f}\n",
+			(long)time(NULL), what, c);
+		fclose(f);
+	}
+}
+
+static void put_celsius(const char *dir, const char *name, double c)
+{
+	put(dir, name, "%ld\n", lround(c * 10));
+}
+
 static void serve(const char *root)
 {
-	char battery[200], usb[200], path[256];
+	char battery[200], usb[200], thermal[200], path[256];
 	time_t stopped = 0, restarted = 0, marked = 0, rescued = 0;
-	int low = 0, raised = 0;
+	int low = 0, hot = 0, plugged = 0, ceiling = 500, applied = 0;
+	enum hold hold = HOLD_NONE;
+	/* N90_CHARGE_HOT lowers the limit for testing the hold on a cool phone. */
+	double hot_c = getenv("N90_CHARGE_HOT") ? atof(getenv("N90_CHARGE_HOT")) : 45;
+	double warm_c = hot_c - 5;
 
 	snprintf(battery, sizeof battery, "%s/battery", root);
 	snprintf(usb, sizeof usb, "%s/usb", root);
+	snprintf(thermal, sizeof thermal, "/run/thermal");
 	mkdir(root, 0755);
 	mkdir(battery, 0755);
 	mkdir(usb, 0755);
+	mkdir(thermal, 0755);
 	put(battery, "type", "Battery\n", 0);
 	put(usb, "type", "USB\n", 0);
 	snprintf(path, sizeof path, "%s/capacity_source", battery);
@@ -581,21 +645,61 @@ static void serve(const char *root)
 		int charging = online && ich > 50;
 		time_t now = time(NULL);
 		long mv = vbat > 0 ? vbat_mv(vbat) : -1;
+		double tbat = celsius(adc(ADC_TBAT)), board[4];
+		static const char *board_names[] = { "sim", "rf", "camera", "soc" };
+		enum hold was = hold;
+		int want;
 
-		/* Once per plug-in: a source that sags at 500 mA keeps what it had. */
+		for (int i = 0; i < 4; i++) {
+			board[i] = celsius(adc(ADC_TDEV1 + i));
+			put_celsius(thermal, board_names[i], board[i]);
+		}
+		put_celsius(battery, "temp", tbat);
+		put(battery, "temp_source", "estimate\n", 0);
+
+		/* Charging a lithium cell above 45 °C or below 0 °C wears it, and a
+		 * worn cell heats more; the PMU's charger does not look. Too hot or
+		 * too cold, the USB input limit drops to 100 mA, below what the
+		 * phone uses, so nothing is left for the battery. From 40 °C it
+		 * charges gently: 300 mA in, about 100 mA of it into the battery. */
+		if (tbat >= hot_c || (hold == HOLD_HOT && tbat > warm_c))
+			hold = HOLD_HOT;
+		else if (tbat <= 0 || (hold == HOLD_COLD && tbat < 3))
+			hold = HOLD_COLD;
+		else if (tbat >= warm_c || (hold == HOLD_WARM && tbat > warm_c - 2))
+			hold = HOLD_WARM;
+		else
+			hold = HOLD_NONE;
+		if (hold != was) {
+			fprintf(stderr, "battery %.1f °C: charging %s\n", tbat,
+				hold == HOLD_NONE ? "normal" : hold == HOLD_WARM ? "gentle" : "held");
+			journal_charge(hold_names[hold], tbat);
+		}
+		snprintf(path, sizeof path, "%s\n", hold_names[hold]);
+		put(battery, "charge_hold", path, 0);
+		want = hold == HOLD_HOT || hold == HOLD_COLD ? 100 : hold == HOLD_WARM ? 300 : 500;
+
+		/* At each plug-in and whenever the wanted limit changes. A source
+		 * that sags at a higher limit keeps what it had until it is
+		 * unplugged. */
 		if (!online) {
-			raised = 0;
-		} else if (!raised) {
-			int limit = pmu_read(PMU_USB_LIMIT);
+			plugged = applied = 0;
+			ceiling = 500;
+		} else {
+			int limit = pmu_read(PMU_USB_LIMIT), target = want < ceiling ? want : ceiling;
 
-			if (limit >= 0 && limit_ma(limit & 0x1f) < 500) {
-				usb_limit(500);
-				fflush(stdout);
+			if (!plugged || target != applied) {
+				if (limit >= 0 && limit_ma(limit & 0x1f) != target) {
+					if (usb_limit(target) && target > limit_ma(limit & 0x1f))
+						ceiling = limit_ma(limit & 0x1f);
+					fflush(stdout);
+				}
+				applied = target;
+				plugged = 1;
 			}
-			raised = 1;
 		}
 		if (online && charge >= 0 && (charge & (CHARGE_TIMEOUT | CHARGE_END)) &&
-		    mv > 0 && mv < 4100) {
+		    mv > 0 && mv < 4100 && hold <= HOLD_WARM) {
 			if (!stopped)
 				stopped = now;
 			/* iOS waits five minutes after a timeout before restarting. */
@@ -627,18 +731,51 @@ static void serve(const char *root)
 		    charging ? "Charging\n" :
 		    charge >= 0 && (charge & CHARGE_END) && mv >= 4100 ? "Full\n" :
 		    "Not charging\n", 0);
+
+		/* Heat: with no frequency scaling on this kernel, being hot means
+		 * shedding optional work (/run/thermal/hot, which n90-story
+		 * respects) and, past what the parts tolerate, switching off. */
+		int soc_hot = board[3] >= 70 || tbat >= 50;
+		snprintf(path, sizeof path, "%s/hot", thermal);
+		if (soc_hot || (access(path, F_OK) == 0 && (board[3] > 65 || tbat > 45)))
+			put(thermal, "hot", "%ld\n", 1);
+		else
+			unlink(path);
+		hot = board[3] >= 90 || tbat >= 60 ? hot + 1 : 0;
+		if (hot >= 3) {
+			FILE *f = fopen("/run/soy/journal.jsonl", "a");
+
+			if (f) {
+				fprintf(f, "{\"t\":%ld,\"e\":\"shutdown\",\"why\":\"hot\","
+					"\"battery_c\":%.1f,\"soc_c\":%.1f}\n", (long)now, tbat, board[3]);
+				fclose(f);
+			}
+			fprintf(stderr, "too hot (battery %.1f °C, A4 %.1f °C): switching off in 20 s\n",
+				tbat, board[3]);
+			sleep(20);
+			mark(LAST_HOT, mv);
+			poweroff();
+		}
+
+		/* What the phone was doing, for the stop record if it stops now. */
 		if (mv > 0 && now - marked >= 60) {
-			mark(LAST_RUNNING, mv);
+			int act = (access("/run/soy/blanked", F_OK) ? ACT_AWAKE : 0) |
+				  (online ? ACT_USB : 0) | (charging ? ACT_CHARGING : 0) |
+				  (soc_hot ? ACT_HOT : 0);
+
+			mark(LAST_ACTIVE | act, mv);
 			marked = now;
 		}
 		/* Plugged in but still draining: a source that gives less than
 		 * the phone uses, or a limit left lowered, ran the battery flat
 		 * overnight on 22-23 October while this only acted on battery.
 		 * Below 3.6 V ask again for 500 mA and restart the charger, at
-		 * most every five minutes; the shutdown below now covers USB too. */
-		if (online && !charging && mv > 0 && mv < 3600 && now - rescued >= 300) {
-			fprintf(stderr, "on USB but not charging at %ld mV: asking for 500 mA\n", mv);
-			usb_limit(500);
+		 * most every five minutes, unless the battery is too hot or cold
+		 * to charge; the shutdown below covers USB too. */
+		if (online && !charging && mv > 0 && mv < 3600 && now - rescued >= 300 &&
+		    hold <= HOLD_WARM) {
+			fprintf(stderr, "on USB but not charging at %ld mV: asking for %d mA\n", mv, want);
+			usb_limit(want);
 			restart_charger();
 			fflush(stdout);
 			rescued = now;

@@ -397,6 +397,8 @@ def boot(run, record):
     deploy_firewall(run)
     deploy_wifi(run)
     deploy_offline(run)
+    deploy_time(run)
+    deploy_ota(run)
     deploy_keep(run)
     return boot_id
 
@@ -479,6 +481,10 @@ def deploy_battery(run):
     # from bytes the PMU kept, into Soy's journal (n90-battery lastrun).
     last = ssh('iphone4-usb', '/usr/sbin/n90-battery lastrun')
     log(run, 'last_stop', detail=(last.stdout or last.stderr).decode().strip()[-200:])
+    try:
+        crash_report(run, last.stdout.decode())
+    except (OSError, ValueError, KeyError, sp.SubprocessError) as exc:
+        log(run, 'crash_report_failed', detail=str(exc)[:200])
     started = sent.returncode == 0 and ssh(
         'iphone4-usb', 'nohup /usr/sbin/n90-battery serve >/run/n90-battery.log 2>&1 '
         '</dev/null & sleep 2; cat /run/power_supply/battery/status').returncode == 0
@@ -488,6 +494,100 @@ def deploy_battery(run):
     clock = ssh('iphone4-usb', '/usr/sbin/n90-battery clock save')
     log(run, 'clock_saved' if clock.returncode == 0 else 'clock_unsaved',
         detail=(clock.stdout or clock.stderr).decode().strip()[-200:])
+
+
+CRASHES = PRIVATE / 'crashes'
+
+
+def crash_report(run, lastrun):
+    """After a stop that was not planned, keep what this computer last heard.
+
+    Nothing on the phone survives a reset (its RAM is not refreshed while it
+    waits in DFU mode), so the record of the last minutes is the follower's
+    copy here. The report puts the PMU's stop record beside the kernel log,
+    keep's log and Soy's journal up to a minute past the phone's last
+    heartbeat. Not a boot failure.
+    """
+    if not lastrun.startswith('last stop: ') or any(
+            lastrun.startswith(f'last stop: {why},') for why in ('reboot', 'off')):
+        return
+    try:
+        journal = ssh('iphone4-usb', 'grep \'"e":"last_stop"\' /run/soy/journal.jsonl | tail -1')
+        at = int(json.loads(journal.stdout.decode())['at'])
+    except (ValueError, KeyError, sp.SubprocessError):
+        return
+    day = time.strftime('%Y-%m-%d', time.localtime(at))
+    until = time.strftime('%H:%M:%S', time.localtime(at + 60))
+    lines = [lastrun.strip(), '']
+    for name in ('kernel.log', 'keep.log'):
+        path = PRIVATE / 'logs' / day / name
+        if path.exists():
+            kept = [line for line in path.read_text(errors='replace').splitlines()[-3000:]
+                    if line[:8] <= until]
+            lines += [f'== {name}, last {min(len(kept), 60)} lines', *kept[-60:], '']
+    path = PRIVATE / 'journal' / f'{day}.jsonl'
+    if path.exists():
+        events = [line for line in path.read_text().splitlines()[-500:]
+                  if '"t":' in line and float(json.loads(line)['t']) <= at + 60]
+        lines += ['== journal, last 30 events', *events[-30:]]
+    CRASHES.mkdir(mode=0o700, exist_ok=True)
+    report = CRASHES / f'{time.strftime("%Y%m%dT%H%M", time.localtime(at))}.txt'
+    report.write_text('\n'.join(lines) + '\n')
+    log(run, 'crash_report', path=str(report.relative_to(PRIVATE)))
+
+
+def deploy_time(run):
+    """The clock keeper (kernel/n90-time), with the frequency it learned before.
+
+    The follower keeps the last learned correction here; applying it at boot
+    means the clock keeps time from the start, also offline. Not a boot
+    failure.
+    """
+    binary = ROOT / 'output/time/n90-time'
+    if not binary.exists():
+        log(run, 'time_skipped', reason='no n90-time build')
+        return
+    sent = ssh('iphone4-usb', 'cat > /usr/sbin/n90-time.new && chmod 755 /usr/sbin/n90-time.new && '
+               'mv /usr/sbin/n90-time.new /usr/sbin/n90-time && mkdir -p /run/time && '
+               'echo laptop > /run/time/source', stdin=binary.read_bytes())
+    freq = PRIVATE / 'time-freq-ppm'
+    if sent.returncode == 0 and freq.exists():
+        ssh('iphone4-usb', f'/usr/sbin/n90-time freq {float(freq.read_text()):.2f}')
+    log(run, 'time_installed' if sent.returncode == 0 else 'time_failed',
+        freq=freq.read_text().strip() if freq.exists() else None)
+
+
+OTA = (('usr/sbin/n90-ota', ROOT / 'kernel/n90-ota/ota.sh', 0o755),
+       ('usr/sbin/n90-sig', ROOT / 'output/ota/n90-sig', 0o755),
+       ('opt/n90-ota/wget', ROOT / 'output/ota/wget', 0o755),
+       ('etc/n90/ota.pub', ROOT / 'kernel/n90-ota/ota.pub', 0o644))
+
+
+def deploy_ota(run):
+    """Updates the phone pulls itself (kernel/n90-ota), and what it runs now.
+
+    The phone then installs a release only if its commit is newer than this
+    checkout's. Not a boot failure.
+    """
+    missing = [str(path) for _, path, _ in OTA if not path.exists()]
+    if missing:
+        log(run, 'ota_skipped', reason='missing ' + ', '.join(missing))
+        return
+    commit = sp.run(['git', '-C', str(ROOT), 'log', '-1', '--format=%H %ct'],
+                    capture_output=True, text=True).stdout.split()
+    version = f"laptop-{commit[0][:7]}" if commit else 'laptop'
+    blob = io.BytesIO()
+    with tarfile.open(fileobj=blob, mode='w') as tar:
+        entries = [(name, path.read_bytes(), mode) for name, path, mode in OTA]
+        entries += [('opt/n90-ota/version', f'{version}\n'.encode(), 0o644),
+                    ('opt/n90-ota/committed', f'{commit[1] if commit else 0}\n'.encode(), 0o644)]
+        for name, data, mode in entries:
+            info = tarfile.TarInfo(name)
+            info.size, info.mode, info.mtime = len(data), mode, int(time.time())
+            tar.addfile(info, io.BytesIO(data))
+    sent = ssh('iphone4-usb', 'tar -xf - -C /', stdin=blob.getvalue(), timeout=60)
+    log(run, 'ota_installed' if sent.returncode == 0 else 'ota_failed', version=version,
+        detail=sent.stderr.decode()[-200:])
 
 
 WIFI = PRIVATE / 'wifi'

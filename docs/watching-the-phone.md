@@ -44,6 +44,11 @@ python3 soy/tools/scene.py journal                      # the day in plain words
 | Reboot, watchdog reset or panic | Everything on the phone is lost; what the laptop already collected stays. The phone then waits in DFU mode until the laptop boots it. The PMU keeps how and when it stopped (low battery, an oops restart, on purpose, or without warning, to the minute, with the battery voltage), and the next boot puts that in the journal ([last stop](../kernel/n90-battery/README.md#last-stop)) |
 | Frozen kernel | The watchdog resets the phone within a minute. Messages from the last seconds are lost |
 
-The device tree reserves 128 KiB at `0x0ffe0000` for ramoops, but the kernel
-is built without `CONFIG_PSTORE_RAM`, so a panic's last messages do not survive
-yet. Whether that RAM would survive the reset and the DFU boot is untested.
+The device tree reserves 128 KiB at `0x0ffe0000` for ramoops, but RAM does
+not survive a reset here: on 24 October markers written there read zero
+after a reboot, because nothing refreshes RAM while the phone waits minutes
+in DFU mode. Without flash storage, what survives on the phone is the PMU's
+stop record, which now also says what the phone was doing in its last
+minute ([last stop](../kernel/n90-battery/README.md#last-stop)). After an
+unplanned stop the boot pass writes a crash report from this computer's
+copies to `.runtime/phone/private/crashes/`.

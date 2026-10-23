@@ -46,6 +46,10 @@ static unsigned long long rx_old, tx_old;
 static double rx_rate, tx_rate, stat_time;
 static char net_name[32] = "No link", wifi_state[64] = "Not connected";
 static char firewall_state[32] = "Not installed", firewall_blocked[32] = "—";
+static char time_source[16], software[64];
+static long time_synced;
+/* Tenths of a degree, from n90-battery's estimates; INT_MIN when absent. */
+static int battery_temp = -100000, board_temp = -100000;
 static long mem_total, mem_available;
 static unsigned long long disk_total, disk_available;
 static int ram_root;
@@ -221,8 +225,25 @@ static inline void stats_battery(void) {
                        !strcmp(buf, "voltage");
     if (supply_value(dir, "status", battery_state, sizeof battery_state))
       strcpy(battery_state, "Battery");
+    battery_temp = !supply_value(dir, "temp", buf, sizeof buf) ? atoi(buf) : -100000;
+    if (!supply_value(dir, "charge_hold", buf, sizeof buf) && *buf) {
+      if (!strcmp(buf, "hot"))
+        strcpy(battery_state, "Not charging: too hot");
+      else if (!strcmp(buf, "cold"))
+        strcpy(battery_state, "Not charging: too cold");
+      else if (!strcmp(buf, "warm") && !strcmp(battery_state, "Charging"))
+        strcpy(battery_state, "Charging gently: warm");
+    }
   }
   globfree(&g);
+  board_temp = -100000;
+  static const char *boards[] = {"sim", "rf", "camera", "soc"};
+  for (int i = 0; i < 4; i++) {
+    char p[64];
+    snprintf(p, sizeof p, "/run/thermal/%s", boards[i]);
+    if (!read_text(p, buf, sizeof buf) && atoi(buf) > board_temp)
+      board_temp = atoi(buf);
+  }
   if (!strcmp(battery_state, "Discharging"))
     strcpy(battery_state, "On battery");
   else if (!strcmp(battery_state, "Unknown"))
@@ -328,12 +349,43 @@ static inline void stats_firewall(void) {
       !*firewall_blocked)
     strcpy(firewall_blocked, "—");
 }
+/* n90-time (kernel/n90-time) says where the clock was last set from. */
+static inline void stats_time(void) {
+  char buf[32];
+  if (read_text("/run/time/source", time_source, sizeof time_source))
+    time_source[0] = 0;
+  time_synced = read_text("/run/time/synced", buf, sizeof buf) ? 0 : atol(buf);
+  /* What n90-ota (kernel/n90-ota) records as running. */
+  if (read_text("/opt/n90-ota/version", software, sizeof software))
+    software[0] = 0;
+}
 static inline void stats(void) {
   stats_battery();
   stats_memory();
   stats_storage();
   stats_network();
   stats_firewall();
+  stats_time();
+}
+/* Before 2026 the clock has not been set since the phone started. */
+#define TIME_PLAUSIBLE 1767225600L
+static inline void time_sync_text(char *out, size_t n) {
+  time_t t = time(NULL);
+  long ago = t - time_synced;
+  if (t < TIME_PLAUSIBLE)
+    snprintf(out, n, "Not set");
+  else if (!strcmp(time_source, "ntp") && time_synced && ago < 120)
+    snprintf(out, n, "Network time, just now");
+  else if (!strcmp(time_source, "ntp") && time_synced && ago < 7200)
+    snprintf(out, n, "Network time, %ld min ago", ago / 60);
+  else if (!strcmp(time_source, "ntp") && time_synced)
+    snprintf(out, n, "Network time, %ld h ago", ago / 3600);
+  else if (!strcmp(time_source, "pmu"))
+    snprintf(out, n, "From the phone's own clock");
+  else if (!strcmp(time_source, "laptop"))
+    snprintf(out, n, "Set by the laptop");
+  else
+    snprintf(out, n, "Not synced");
 }
 static inline const char *binding(const char *key, char *out, size_t n) {
   if (!strcmp(key, "battery.percent")) {
@@ -343,7 +395,13 @@ static inline const char *binding(const char *key, char *out, size_t n) {
       snprintf(out, n, "—");
   } else if (!strcmp(key, "battery.state"))
     snprintf(out, n, "%s", battery_state);
-  else if (!strcmp(key, "battery.voltage")) {
+  else if (!strcmp(key, "battery.temp") || !strcmp(key, "phone.temp")) {
+    int t = !strcmp(key, "battery.temp") ? battery_temp : board_temp;
+    if (t > -1000)
+      snprintf(out, n, "~%d °C", (t + (t >= 0 ? 5 : -5)) / 10);
+    else
+      snprintf(out, n, "—");
+  } else if (!strcmp(key, "battery.voltage")) {
     if (battery_mv > 0)
       snprintf(out, n, "%d.%02d V", battery_mv / 1000, battery_mv % 1000 / 10);
     else
@@ -357,6 +415,29 @@ static inline const char *binding(const char *key, char *out, size_t n) {
     pretty_bytes(rx_rate, out, n, "/s");
   else if (!strcmp(key, "net.tx"))
     pretty_bytes(tx_rate, out, n, "/s");
+  else if (!strcmp(key, "time.clock") || !strcmp(key, "time.date")) {
+    static const char *days[] = {"Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"},
+                      *months[] = {"Jan", "Feb", "Mar", "Apr", "May", "Jun",
+                                   "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+    time_t t = time(NULL);
+    struct tm tm;
+    localtime_r(&t, &tm);
+    if (t < TIME_PLAUSIBLE)
+      snprintf(out, n, "—");
+    else if (!strcmp(key, "time.clock"))
+      snprintf(out, n, "%02d:%02d", tm.tm_hour, tm.tm_min);
+    else
+      snprintf(out, n, "%s %d %s", days[tm.tm_wday], tm.tm_mday, months[tm.tm_mon]);
+  } else if (!strcmp(key, "time.sync"))
+    time_sync_text(out, n);
+  else if (!strcmp(key, "system.software")) {
+    if (!strncmp(software, "laptop-", 7))
+      snprintf(out, n, "%s, from the laptop", software + 7);
+    else if (*software)
+      snprintf(out, n, "%s, over the air", software);
+    else
+      snprintf(out, n, "—");
+  }
   else if (!strcmp(key, "net.firewall"))
     snprintf(out, n, "%s", firewall_state);
   else if (!strcmp(key, "net.blocked"))
