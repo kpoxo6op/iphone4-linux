@@ -12,6 +12,7 @@
 # on it. With nothing known in range the scans back
 # off from 20 s to 2 min. Routes through a link that is down are ignored,
 # so the USB cable's default route stops mattering once it is unplugged.
+# The firewall (kernel/n90-net) is checked first on every round.
 export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 NETS=/run/wifi/networks
 LOG=/run/wifi/keep.log
@@ -52,6 +53,9 @@ dhcp_running() {
 say "keep started"
 wait=20 was=
 while :; do
+	# The firewall goes up before the phone joins a network, and the screen's
+	# firewall reading stays current (kernel/n90-net).
+	[ -x /usr/sbin/n90-firewall ] && n90-firewall check
 	# No known network: leave the radio off.
 	if [ ! -s "$NETS" ]; then
 		sleep 30

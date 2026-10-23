@@ -1,0 +1,44 @@
+#!/usr/sbin/nft -f
+# The phone's firewall (kernel/n90-net/README.md#firewall).
+#
+# Only the laptop's USB link and the tailnet reach the phone's services. On
+# Wi-Fi and hotspots the phone answers nothing but Tailscale's own encrypted
+# port, which ignores anyone who is not one of its peers. Replies to the
+# phone's own connections come back; everything else addressed to it is
+# dropped and counted. Nothing is filtered on the way out.
+
+destroy table inet n90
+
+table inet n90 {
+	# Packets addressed to the phone itself that were dropped, since boot.
+	# Broadcast and multicast chatter from other devices is not counted.
+	counter blocked {
+	}
+
+	chain input {
+		type filter hook input priority filter; policy drop;
+
+		iif "lo" accept
+		# The cable to the laptop, which hands out 10.84.4.2 and is 10.84.4.1.
+		iifname "usb0" ip saddr 10.84.4.1 accept
+		# Tailscale already admits only the tailnet's own devices here.
+		iifname "tailscale0" accept
+
+		ct state established,related accept
+		ct state invalid drop
+
+		# Tailscale's WireGuard port, for direct connections on the same network.
+		udp dport 41641 accept
+		# DHCP answers that arrive by broadcast when a lease is renewed.
+		udp sport 67 udp dport 68 accept
+		# IPv6 needs neighbour discovery and router adverts to keep an address.
+		icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept
+
+		meta pkttype { broadcast, multicast } drop
+		counter name "blocked" drop
+	}
+
+	chain forward {
+		type filter hook forward priority filter; policy drop;
+	}
+}

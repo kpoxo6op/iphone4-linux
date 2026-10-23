@@ -1934,6 +1934,7 @@ int main(int argc, char **argv) {
         break;
       case 3:
         stats_network();
+        stats_firewall();
         break;
       case 4:
         soy_input_scan();

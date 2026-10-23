@@ -495,7 +495,7 @@ def journal_summary(directory, day, labels):
         return f'No journal for {day}.'
     events.sort(key=lambda e: e['t'])
     reading, furthest, wakes, sleeps, restarts, battery, oopses = {}, {}, {}, {}, {}, [], []
-    shutdowns, stops = [], []
+    shutdowns, stops, firewall = [], [], []
     scene, awake, since, last = None, False, None, None
 
     def add(name, seconds):
@@ -537,6 +537,8 @@ def journal_summary(directory, day, labels):
             shutdowns.append(e)
         elif kind == 'last_stop':
             stops.append(e)
+        elif kind == 'firewall':
+            firewall.append(e)
         last = t
     if awake:
         end = min(time.time(), last + 60) if day == time.strftime('%Y-%m-%d') else last
@@ -565,6 +567,8 @@ def journal_summary(directory, day, labels):
         out.append(f'Screen woke {times(wakes)}, slept {times(sleeps)}' if wakes else
                    f'Screen slept {times(sleeps)}')
     out.append('Restarted by keep: ' + (times(restarts) if restarts else 'nothing'))
+    if firewall:
+        out.append(f"Firewall: {firewall[-1].get('state')} since {clock(firewall[-1]['t'])}")
     for e in shutdowns:
         out.append(f"Switched itself off at {clock(e['t'])}: battery low "
                    f"({e.get('mv', 0) / 1000:.2f} V)")

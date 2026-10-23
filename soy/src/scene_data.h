@@ -45,6 +45,7 @@ static double battery_tick = -1;
 static unsigned long long rx_old, tx_old;
 static double rx_rate, tx_rate, stat_time;
 static char net_name[32] = "No link", wifi_state[64] = "Not connected";
+static char firewall_state[32] = "Not installed", firewall_blocked[32] = "—";
 static long mem_total, mem_available;
 static unsigned long long disk_total, disk_available;
 static int ram_root;
@@ -319,11 +320,20 @@ static inline void stats_network(void) {
   stat_time = t;
   history(network_history, &nn, rx_rate + tx_rate);
 }
+/* n90-firewall (kernel/n90-net) keeps both files current. */
+static inline void stats_firewall(void) {
+  if (read_text("/run/net/firewall", firewall_state, sizeof firewall_state))
+    strcpy(firewall_state, "Not installed");
+  if (read_text("/run/net/blocked", firewall_blocked, sizeof firewall_blocked) ||
+      !*firewall_blocked)
+    strcpy(firewall_blocked, "—");
+}
 static inline void stats(void) {
   stats_battery();
   stats_memory();
   stats_storage();
   stats_network();
+  stats_firewall();
 }
 static inline const char *binding(const char *key, char *out, size_t n) {
   if (!strcmp(key, "battery.percent")) {
@@ -347,6 +357,10 @@ static inline const char *binding(const char *key, char *out, size_t n) {
     pretty_bytes(rx_rate, out, n, "/s");
   else if (!strcmp(key, "net.tx"))
     pretty_bytes(tx_rate, out, n, "/s");
+  else if (!strcmp(key, "net.firewall"))
+    snprintf(out, n, "%s", firewall_state);
+  else if (!strcmp(key, "net.blocked"))
+    snprintf(out, n, "%s", firewall_blocked);
   else if (!strcmp(key, "memory.used"))
     pretty_bytes((mem_total - mem_available) * 1024., out, n, "");
   else if (!strcmp(key, "memory.available"))

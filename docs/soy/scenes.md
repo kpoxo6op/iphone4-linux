@@ -84,6 +84,8 @@ follows.
 | `net.link` | the interface carrying the default route, `USB` for the cable |
 | `net.wifi` | `Connected`, `Not connected` or `Unavailable` |
 | `net.rx`, `net.tx` | receive and send rates, such as `12 KiB/s` |
+| `net.firewall` | `On`, `Off` or `Not installed` ([firewall](../../kernel/n90-net/README.md#firewall)) |
+| `net.blocked` | packets addressed to the phone that the firewall dropped since it loaded, or `—` |
 | `memory.used`, `memory.available` | RAM |
 | `storage.kind`, `storage.usage` | root filesystem kind and use |
 
