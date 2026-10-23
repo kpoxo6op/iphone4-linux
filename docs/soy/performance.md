@@ -232,7 +232,20 @@ library, lean kernel `e899dceb`:
 | Top sheet | 120.9 | 8.8 ms | 9.7 ms | 11.9 ms | 0 / 1245 |
 | Bottom sheet | 92.3 | 12.5 ms | 13.3 ms | 14.7 ms | 0 / 947 |
 
-**All six pass.** The margin on pages is thin again: 16.3 ms worst.
+All six passed in that run, pages with 16.3 ms worst. **Pages does not pass
+reliably.** After the reboot that installed the merged build (`389528b`),
+reading, both pinches and both sheets passed, and pages missed one frame in
+three of eight runs (16.8, 17.2 and 17.4 ms). The build before these changes
+(`820ef33`), run alternately on the same phone, passed four runs with
+16.2 ms worst, but its frame times match: p99 interval 14.2 ms against
+13.9 ms, and frames over 16 ms at 0.046 % against 0.055 %. So this is the
+thin margin noted before, not a slowdown from the change.
+
+The missed frames have the same shape: a 13-14 ms render and copy, with
+Soy's `status.json` write (1.2-1.6 ms, ten times a second while awake)
+landing in the gap just before it. Next: take that write off the frame path
+while motion is drawing frames back to back, without starving the touch
+checks that read `status.json` during a held contact.
 
 ## Latest phone measurement — still fails
 

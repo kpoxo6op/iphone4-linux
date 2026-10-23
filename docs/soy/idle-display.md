@@ -95,8 +95,10 @@ Measured with the charger as a meter ([battery](../../kernel/n90-battery/README.
 stopping scanout took roughly 30-50 mA off the blanked phone. Across sleep
 and wake the DSI controller's status returned to its running value
 (`0x80100408`, `0x8010040f` while stopped) with no new error bits, and all
-six motion surfaces passed the 60 fps gate with this build. Nobody has looked
-at the glass after a wake yet.
+six motion surfaces passed the 60 fps gate with this build (pages only
+intermittently since, [as before the change](performance.md#23-october-2026-firewall-and-blanked-scanout)).
+After a full reboot the boot-installed renderer blanked and stopped scanout
+(`0x89200050` read `0x2`). Nobody has looked at the glass after a wake yet.
 
 ## Verification
 
