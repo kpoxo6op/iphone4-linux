@@ -85,3 +85,11 @@ From GitHub: the first release,
 by the laptop from the same commit, checked by itself five minutes after
 keep started the updater: it fetched and verified the manifest over HTTPS
 and found it was up to date (`laptop-5a9585e`).
+
+Then the second release,
+[phone-2026-10-23-58b0d0d](https://github.com/kpoxo6op/iphone4-linux/releases/tag/phone-2026-10-23-58b0d0d),
+from the merge of #45: with its updater restarted so that it checked five
+minutes later instead of in six hours, the phone found the release at
+10:13:14, downloaded and verified it from GitHub, installed it, and recorded
+it as healthy at 10:14:40. Soy's Now page then read "2026-10-23-58b0d0d,
+over the air".
