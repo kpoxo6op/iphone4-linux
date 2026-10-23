@@ -80,6 +80,24 @@ The panel itself stays powered (only the backlight goes off), and the A4 runs
 at a fixed clock with no frequency scaling. Battery life on battery has not
 been measured yet; the journal's five-minute battery samples will give it.
 
+### Display scanout
+
+With the backlight off, the display controller still read the whole
+framebuffer 60 times a second and sent it to the panel. Since 23 October Soy
+stops it when it blanks: bit 0 of the CLCD's register at `0x89200050` enables
+scanout and bit 1 reads back once it has stopped (openiBoot
+`plat-a4/clcd.c`, `lcd_fill_switch`). On wake Soy sets bit 0 again, draws the
+scene and waits 34 ms, two frames, before lighting the backlight. Opening the
+display restarts scanout too, so a renderer killed while blanked cannot leave
+the next one dark. `status.json` reports `scanout: stopped` or `running`.
+
+Measured with the charger as a meter ([battery](../../kernel/n90-battery/README.md#measuring-without-an-ammeter-23-october)),
+stopping scanout took roughly 30-50 mA off the blanked phone. Across sleep
+and wake the DSI controller's status returned to its running value
+(`0x80100408`, `0x8010040f` while stopped) with no new error bits, and all
+six motion surfaces passed the 60 fps gate with this build. Nobody has looked
+at the glass after a wake yet.
+
 ## Verification
 
 `soy/tools/check_idle.py` exercises the real native process and rendered pixels

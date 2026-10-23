@@ -84,6 +84,8 @@ follows.
 | `net.link` | the interface carrying the default route, `USB` for the cable |
 | `net.wifi` | `Connected`, `Not connected` or `Unavailable` |
 | `net.rx`, `net.tx` | receive and send rates, such as `12 KiB/s` |
+| `net.firewall` | `On`, `Off` or `Not installed` ([firewall](../../kernel/n90-net/README.md#firewall)) |
+| `net.blocked` | packets addressed to the phone that the firewall dropped since it loaded, or `—` |
 | `memory.used`, `memory.available` | RAM |
 | `storage.kind`, `storage.usage` | root filesystem kind and use |
 
@@ -131,6 +133,17 @@ phone watcher on the laptop notices when the phone is back on USB and syncs it
 within about 30 seconds; any later `put`, `publish` or `sync` also brings it
 over, and every boot installs the library's last saved scenes. If those fail on the phone, the boot falls back to
 the default scenes so the screen is never empty.
+
+## Scenes the phone writes itself
+
+Programs on the phone can publish without the laptop through `n90-scene`
+([kernel/n90-offline](../../kernel/n90-offline/README.md)), the same checked,
+atomic switch `put` makes. Such scenes say `source: phone …` in their
+frontmatter. The first is the Story scene that the phone writes with a small
+local model after ten minutes without a connection. When the laptop next
+reaches the phone, the follower and every `sync` copy these scenes into the
+library ("Written on the phone: …" in its history), so they survive a reboot
+and later publishes keep them.
 
 ## Where you were
 

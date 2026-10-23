@@ -8,7 +8,8 @@ somewhere else, this
 - streams the kernel log as the kernel writes it,
 - copies new lines of the service logs every 10 s (30 s over Tailscale, to
   spare the phone's battery), and
-- collects Soy's journal the same way (soy/tools/scene.py journal pull).
+- collects Soy's journal the same way (soy/tools/scene.py journal pull), and
+- keeps scenes the phone wrote itself in the scene library (scene.py adopt).
 
 Everything lands in .runtime/phone/private/logs/YYYY-MM-DD/, so Claude and
 Boris can watch it live and read it later. While the phone is out of reach
@@ -155,6 +156,22 @@ def copy_positions(link):
         temp.replace(POSITIONS)
 
 
+def adopt_scenes(link, state):
+    """Keep scenes the phone wrote itself (kernel/n90-offline) in the library,
+    so a reboot does not lose them."""
+    current = link.run('readlink /opt/soy/current 2>/dev/null; true', timeout=20).decode().strip()
+    if not current.startswith('releases/phone-') or state.get('adopted') == current:
+        return
+    library = scene.Library(PRIVATE / 'scenes').open()
+    try:
+        ids = scene.adopt(library, link)
+    finally:
+        library.lock.close()
+    state['adopted'] = current
+    if ids:
+        note('kept scenes the phone wrote: ' + ', '.join(ids))
+
+
 def on_usb():
     out = sp.run(['ip', '-o', '-4', 'addr', 'show'], capture_output=True, text=True).stdout
     return f' {USB_ADDRESS}/' in out
@@ -186,6 +203,7 @@ def session(route, host, interval):
             copy_files(link, state['files'])
             scene.journal_pull(link, scene.JOURNAL)
             copy_positions(link)
+            adopt_scenes(link, state)
             with lock:
                 save(state)
             if route == 'tailscale' and on_usb():

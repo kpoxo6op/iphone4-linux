@@ -1,0 +1,57 @@
+--- a/runq.c
++++ b/runq.c
+@@ -14,6 +14,9 @@
+     #include <unistd.h>
+     #include <sys/mman.h>
+ #endif
++#if defined(__ARM_NEON)
++#include <arm_neon.h>
++#endif
+ // ----------------------------------------------------------------------------
+ // Globals
+ int GS = 0; // group size global for quantization of the weights
+@@ -200,9 +203,9 @@
+     // now read all the quantized weights
+     ptr = (void*)fptr; // now cast the pointer back to void*
+     w->q_tokens = init_quantized_tensors(&ptr, 1, p->vocab_size * p->dim);
+-    // dequantize token embedding table
+-    w->token_embedding_table = malloc(p->vocab_size * p->dim * sizeof(float));
+-    dequantize(w->q_tokens, w->token_embedding_table, p->vocab_size * p->dim);
++    // n90: no dequantized copy of the whole table (65 MB for the 42M model on
++    // a 512 MB phone); forward() dequantizes the one row it needs.
++    w->token_embedding_table = NULL;
+ 
+     w->wq = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_heads * head_size));
+     w->wk = init_quantized_tensors(&ptr, p->n_layers, p->dim * (p->n_kv_heads * head_size));
+@@ -330,9 +333,21 @@
+         // do the matmul in groups of GS
+         int j;
+         for (j = 0; j <= n - GS; j += GS) {
++#if defined(__ARM_NEON)
++            // n90: GCC leaves this loop scalar for the Cortex-A8; 16 at a time.
++            int32x4_t acc = vdupq_n_s32(0);
++            for (int k = 0; k < GS; k += 16) {
++                int8x16_t a = vld1q_s8(x->q + j + k), b = vld1q_s8(w->q + in + j + k);
++                acc = vpadalq_s16(acc, vmull_s8(vget_low_s8(a), vget_low_s8(b)));
++                acc = vpadalq_s16(acc, vmull_s8(vget_high_s8(a), vget_high_s8(b)));
++            }
++            int32x2_t pair = vadd_s32(vget_low_s32(acc), vget_high_s32(acc));
++            ival = vget_lane_s32(vpadd_s32(pair, pair), 0);
++#else
+             for (int k = 0; k < GS; k++) {
+                 ival += ((int32_t) x->q[j + k]) * ((int32_t) w->q[in + j + k]);
+             }
++#endif
+             val += ((float) ival) * w->s[(in + j) / GS] * x->s[j / GS];
+             ival = 0;
+         }
+@@ -355,7 +370,8 @@
+     int head_size = dim / p->n_heads;
+ 
+     // copy the token embedding into x
+-    memcpy(x, w->token_embedding_table + token*dim, dim * sizeof(float));
++    for (int i = 0; i < dim; i++)
++        x[i] = w->q_tokens->q[token * dim + i] * w->q_tokens->s[(token * dim + i) / GS];
+ 
+     // forward all the layers
+     for(int l = 0; l < p->n_layers; l++) {

@@ -29,6 +29,9 @@
  *   probe            print the supply registers and every ADC channel
  *   usb-limit <mA>   raise or lower the USB input current limit, backing
  *                    off if VBUS sags by more than a tenth
+ *   meter [mA]       the phone's draw on USB, from the limit at which the
+ *                    charger stops charging, or from the charge current at
+ *                    one limit, for comparisons (stop serve first)
  *   serve [dir]      publish readings every 10 s as power_supply-style
  *                    files under dir (default /run/power_supply)
  *   poweroff         switch the phone off through the PMU
@@ -52,10 +55,12 @@
  * it raises the USB limit to 500 mA, as usb-limit does: the PMU starts again
  * at 100 mA, less than the phone uses, so it drained on a charger.
  *
- * Low battery: on battery, three readings in a row (30 s) under 3.45 V,
- * about 2 % left, switch the phone off before the battery browns it out.
- * serve notes it in Soy's journal and waits 20 s so the laptop can copy the
- * logs if it can reach the phone. Power then starts the phone into DFU mode.
+ * Low battery: three readings in a row (30 s) under 3.45 V, about 2 % left,
+ * on battery or on a USB source that is not charging it, switch the phone
+ * off before the battery browns it out. serve notes it in Soy's journal and
+ * waits 20 s so the laptop can copy the logs if it can reach the phone.
+ * Power then starts the phone into DFU mode. On USB below 3.6 V without
+ * charging, serve first asks for 500 mA again and restarts the charger.
  *
  * poweroff is openiBoot's pmu_poweroff() for the A4: mask the wake events
  * in 0x0c-0x11, drive the PMU GPIO outputs low, set 0x12 (OOCSHDWN).
@@ -69,6 +74,7 @@
  */
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <linux/i2c.h>
 #include <linux/i2c-dev.h>
 #include <stdint.h>
@@ -304,6 +310,87 @@ static int restart_charger(void)
 	return pmu_write(PMU_CHARGER, v);
 }
 
+/* How much the phone draws, without an ammeter. While the charger charges
+ * at its USB input limit, the battery gets the limit less what the phone
+ * uses, about 4.7 ich counts per mA (README, "Power draw"). Lower the limit a
+ * step at a time until charging stops: the draw is the last limit that still
+ * charged, less the current that went to the battery there. The limit goes
+ * back afterwards, also on SIGINT, SIGTERM or SIGHUP. serve must not run
+ * meanwhile: both use the PMU's ADC. */
+static int meter_limit = -1;
+
+static void meter_restore(int sig)
+{
+	if (meter_limit >= 0)
+		pmu_write(PMU_USB_LIMIT, meter_limit);
+	if (sig)
+		_exit(1);
+}
+
+static int ich_average(int n)
+{
+	int i, v, sum = 0, got = 0;
+
+	for (i = 0; i < n; i++) {
+		v = adc(ADC_ICH);
+		if (v >= 0) {
+			sum += v;
+			got++;
+		}
+		msleep(100);
+	}
+	return got ? sum / got : -1;
+}
+
+static int meter(int at)
+{
+	int code, ich = -1, last = -1, last_ich = 0, charge = pmu_read(PMU_CHARGE);
+
+	if (!(pmu_read(PMU_SUPPLY) & PMU_SUPPLY_USB)) {
+		fprintf(stderr, "no USB power\n");
+		return 1;
+	}
+	meter_limit = pmu_read(PMU_USB_LIMIT);
+	if (meter_limit < 0)
+		return 1;
+	signal(SIGINT, meter_restore);
+	signal(SIGTERM, meter_restore);
+	signal(SIGHUP, meter_restore);
+	/* A charge that ended or timed out reads 0 at any limit. */
+	if (charge >= 0 && (charge & (CHARGE_TIMEOUT | CHARGE_END)))
+		restart_charger();
+	/* One fixed limit, averaged longer: for comparing two states. */
+	if (at > 0) {
+		code = limit_code(at);
+		pmu_write(PMU_USB_LIMIT, code | 0x80);
+		sleep(3);
+		ich = ich_average(50);
+		meter_restore(0);
+		printf("limit %d mA: ich %d, draw %d mA\n", limit_ma(code), ich,
+		       limit_ma(code) - ich * 10 / 47);
+		return ich < 40;
+	}
+	for (code = limit_code(500); code >= 0; code--) {
+		pmu_write(PMU_USB_LIMIT, code | 0x80);
+		sleep(3);
+		ich = ich_average(10);
+		printf("limit %d mA: ich %d\n", limit_ma(code), ich);
+		fflush(stdout);
+		if (ich < 40)
+			break;
+		last = code;
+		last_ich = ich;
+	}
+	meter_restore(0);
+	if (last < 0 || code < 0) {
+		fprintf(stderr, "no step where charging stopped\n");
+		return 1;
+	}
+	printf("draw %d mA (charging stopped between %d and %d mA)\n",
+	       limit_ma(last) - last_ich * 10 / 47, limit_ma(code), limit_ma(last));
+	return 0;
+}
+
 /* openiBoot plat-a4/pmu.c pmu_write_oocshdwn(1). Does not return. */
 static void poweroff(void)
 {
@@ -475,7 +562,7 @@ static void note_shutdown(long mv)
 static void serve(const char *root)
 {
 	char battery[200], usb[200], path[256];
-	time_t stopped = 0, restarted = 0, marked = 0;
+	time_t stopped = 0, restarted = 0, marked = 0, rescued = 0;
 	int low = 0, raised = 0;
 
 	snprintf(battery, sizeof battery, "%s/battery", root);
@@ -544,11 +631,25 @@ static void serve(const char *root)
 			mark(LAST_RUNNING, mv);
 			marked = now;
 		}
-		low = supply >= 0 && !online && mv > 0 && mv < LOW_MV ? low + 1 : 0;
+		/* Plugged in but still draining: a source that gives less than
+		 * the phone uses, or a limit left lowered, ran the battery flat
+		 * overnight on 22-23 October while this only acted on battery.
+		 * Below 3.6 V ask again for 500 mA and restart the charger, at
+		 * most every five minutes; the shutdown below now covers USB too. */
+		if (online && !charging && mv > 0 && mv < 3600 && now - rescued >= 300) {
+			fprintf(stderr, "on USB but not charging at %ld mV: asking for 500 mA\n", mv);
+			usb_limit(500);
+			restart_charger();
+			fflush(stdout);
+			rescued = now;
+		}
+		low = supply >= 0 && (!online || !charging) && mv > 0 && mv < LOW_MV ?
+			low + 1 : 0;
 		if (low >= 3) {
 			note_shutdown(mv);
 			sleep(20);
-			if (!(pmu_read(PMU_SUPPLY) & PMU_SUPPLY_USB)) {
+			supply = pmu_read(PMU_SUPPLY);
+			if (!(supply & PMU_SUPPLY_USB) || adc(ADC_ICH) <= 50) {
 				mark(LAST_BATTERY, mv);
 				poweroff();
 			}
@@ -561,8 +662,8 @@ static void serve(const char *root)
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
-		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | serve [dir] | poweroff | "
-			"clock [save|load] | mark oops|reboot | lastrun\n");
+		fprintf(stderr, "usage: n90-battery probe | usb-limit <mA> | meter [mA] | serve [dir] | "
+			"poweroff | clock [save|load] | mark oops|reboot | lastrun\n");
 		return 2;
 	}
 	i2c = open("/dev/i2c-0", O_RDWR);
@@ -574,6 +675,26 @@ int main(int argc, char **argv)
 		probe();
 	else if (!strcmp(argv[1], "usb-limit") && argc > 2)
 		return usb_limit(atoi(argv[2]));
+	else if (!strcmp(argv[1], "adc") && argc > 2) {
+		int ch = atoi(argv[2]), n = argc > 3 ? atoi(argv[3]) : 1, i, v, sum = 0, got = 0;
+		int lo = 4096, hi = -4096, sign = argc > 4 && !strcmp(argv[4], "signed");
+
+		for (i = 0; i < n; i++) {
+			v = adc(ch);
+			if (v >= 0 && sign && v >= 2048)
+				v -= 4096;
+			if (v > -4096) {
+				sum += v;
+				got++;
+				lo = v < lo ? v : lo;
+				hi = v > hi ? v : hi;
+			}
+			msleep(20);
+		}
+		printf("adc %d: mean %d, min %d, max %d, %d readings\n", ch, got ? sum / got : -1,
+		       lo, hi, got);
+	} else if (!strcmp(argv[1], "meter"))
+		return meter(argc > 2 ? atoi(argv[2]) : 0);
 	else if (!strcmp(argv[1], "serve"))
 		serve(argc > 2 ? argv[2] : "/run/power_supply");
 	else if (!strcmp(argv[1], "poweroff")) {

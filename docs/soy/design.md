@@ -26,6 +26,12 @@ has the format and the commands. It is a first step, not a decided
 architecture. Record new mechanisms here once they are actually built, and
 don't present an unbuilt one as settled.
 
+Since 23 October 2026 the phone can also publish scenes it writes itself,
+without the laptop ([offline](../../kernel/n90-offline/README.md)). The first
+is a short story from a small model on the phone after ten minutes without a
+connection; the laptop copies such scenes into the library when it next
+reaches the phone.
+
 ## The feel
 
 Dark, quiet, legible. Warm white text, a little phosphor green, generous space.

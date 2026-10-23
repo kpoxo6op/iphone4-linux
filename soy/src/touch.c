@@ -75,6 +75,8 @@ static lv_obj_t *blank_screen;
 static unsigned idle_seconds = 60;
 /* -1: no backlight device, 0: off, 1: on. */
 static int backlight_state = -1;
+/* The display controller's framebuffer reads, stopped while blanked. */
+static int scanout_stopped;
 static int keyfd = -1;
 static int wake_contact;
 static uint32_t fallback_pixels[W * H];
@@ -1291,8 +1293,15 @@ static void wake_display(const char *why) {
   lv_timer_resume(lv_display_get_refr_timer(display));
   lv_timer_ready(lv_display_get_refr_timer(display));
   lv_obj_invalidate(lv_screen_active());
-  /* Light the panel only after the restored scene is in the buffer. */
+  if (scanout_stopped)
+    soy_display_scanout(1);
+  /* Light the panel only after the restored scene is in the buffer and, when
+   * scanout was stopped, after two frames have reached the panel. */
   lv_refr_now(display);
+  if (scanout_stopped) {
+    scanout_stopped = 0;
+    usleep(34000);
+  }
   if (backlight_state == 0)
     set_backlight(1);
 }
@@ -1325,6 +1334,7 @@ static void sleep_display(const char *why) {
   lv_refr_now(display);
   lv_timer_pause(lv_display_get_refr_timer(display));
   set_backlight(0);
+  scanout_stopped = !headless && !soy_display_scanout(0);
   mark_blanked(1);
 }
 static int set_idle_timeout(const char *s) {
@@ -1669,7 +1679,8 @@ static void status(void) {
           ".3f,\"input_present_max_ms\":%.3f,\"transfer_avg_ms\":%.3f,"
           "\"transfer_max_ms\":%.3f,\"scanout_verified\":false,"
           "\"display_state\":\"%s\",\"idle_timeout_s\":%u,"
-          "\"inactive_ms\":%u,\"backlight\":\"%s\",\"buttons\":%s,",
+          "\"inactive_ms\":%u,\"backlight\":\"%s\",\"scanout\":\"%s\","
+          "\"buttons\":%s,",
           headless         ? "headless"
           : direct_display ? "simpledrm"
                            : "framebuffer",
@@ -1685,7 +1696,7 @@ static void status(void) {
           transfer_max, blank_screen ? "blanked" : "awake", idle_seconds,
           lv_display_get_inactive_time(display),
           backlight_state < 0 ? "unavailable" : backlight_state ? "on" : "off",
-          keyfd >= 0 ? "true" : "false");
+          scanout_stopped ? "stopped" : "running", keyfd >= 0 ? "true" : "false");
   fputs("\"scenes\":[", f);
   for (int i = 0; i < count; i++)
     fprintf(f, "%s\"%s\"", i ? "," : "", scenes[i].id);
@@ -1934,6 +1945,7 @@ int main(int argc, char **argv) {
         break;
       case 3:
         stats_network();
+        stats_firewall();
         break;
       case 4:
         soy_input_scan();

@@ -332,8 +332,61 @@ def full_deploy(phone, files, revision, focus, receipt):
     return record['release']
 
 
+def adopt(library, phone):
+    """Copy scenes the phone wrote itself into the library; return their IDs.
+
+    Programs on the phone publish with n90-scene (kernel/n90-offline), for
+    example while it has no connection. Their scenes say `source: phone` and
+    live in a release named phone-*. Keeping them in the library first means
+    a later publish or a reboot does not drop them.
+    """
+    out = phone.run('readlink /opt/soy/current; cat /opt/soy/current/manifest.json').decode()
+    current, _, manifest = out.partition('\n')
+    if not current.startswith('releases/phone-'):
+        return []
+    try:
+        published = json.loads(manifest).get('files', {})
+    except ValueError:
+        return []
+    files = library.files()
+    ids = library.index()
+    adopted = []
+    for name, digest in published.items():
+        scene_id = name.removeprefix('scenes/').removesuffix('.md')
+        if (not name.startswith('scenes/') or not name.endswith('.md') or
+                not SCENE_ID.fullmatch(scene_id) or
+                sha(files.get(scene_id + '.md', b'')) == digest):
+            continue
+        text = phone.run(f'cat /opt/soy/current/scenes/{scene_id}.md')
+        head = text.decode(errors='replace').split('\n---\n', 1)[0].splitlines()
+        if sha(text) != digest or not any(
+                line.startswith('source:') and line[7:].strip().startswith('phone')
+                for line in head):
+            continue
+        (library.path / f'{scene_id}.md').write_bytes(text)
+        if scene_id not in ids:
+            ids.append(scene_id)
+        adopted.append(scene_id)
+    if adopted:
+        library.write_index(ids)
+        try:
+            check(library.path)
+        except Failure:
+            library.git('checkout', '--', '.')
+            library.git('clean', '-fq', '--', *[i + '.md' for i in adopted])
+            raise
+        library.commit('Written on the phone: ' + ', '.join(adopted))
+    return adopted
+
+
 def sync(library, phone, receipt=None, show=None):
     """Make the phone show the library's committed scenes. Returns a summary."""
+    try:
+        adopt(library, phone)
+    except Unreachable:
+        raise
+    except Failure:
+        pass  # a phone scene that fails the check here is not kept
     files = library.files()
     ids = scene_ids(files['index'].decode())
     focus = start_scene(ids, library.focus())
@@ -495,7 +548,7 @@ def journal_summary(directory, day, labels):
         return f'No journal for {day}.'
     events.sort(key=lambda e: e['t'])
     reading, furthest, wakes, sleeps, restarts, battery, oopses = {}, {}, {}, {}, {}, [], []
-    shutdowns, stops = [], []
+    shutdowns, stops, firewall = [], [], []
     scene, awake, since, last = None, False, None, None
 
     def add(name, seconds):
@@ -537,6 +590,8 @@ def journal_summary(directory, day, labels):
             shutdowns.append(e)
         elif kind == 'last_stop':
             stops.append(e)
+        elif kind == 'firewall':
+            firewall.append(e)
         last = t
     if awake:
         end = min(time.time(), last + 60) if day == time.strftime('%Y-%m-%d') else last
@@ -565,6 +620,8 @@ def journal_summary(directory, day, labels):
         out.append(f'Screen woke {times(wakes)}, slept {times(sleeps)}' if wakes else
                    f'Screen slept {times(sleeps)}')
     out.append('Restarted by keep: ' + (times(restarts) if restarts else 'nothing'))
+    if firewall:
+        out.append(f"Firewall: {firewall[-1].get('state')} since {clock(firewall[-1]['t'])}")
     for e in shutdowns:
         out.append(f"Switched itself off at {clock(e['t'])}: battery low "
                    f"({e.get('mv', 0) / 1000:.2f} V)")

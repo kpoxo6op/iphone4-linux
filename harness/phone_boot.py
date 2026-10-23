@@ -394,7 +394,9 @@ def boot(run, record):
     deploy_display(run)
     deploy_touch(run)
     deploy_battery(run)
+    deploy_firewall(run)
     deploy_wifi(run)
+    deploy_offline(run)
     deploy_keep(run)
     return boot_id
 
@@ -545,6 +547,50 @@ def deploy_wifi(run):
                stdin=blob.getvalue(), timeout=120)
     log(run, 'wifi_installed' if sent.returncode == 0 else 'wifi_failed',
         networks=wifi_networks().count('\n'), detail=sent.stderr.decode()[-200:])
+
+
+def deploy_firewall(run):
+    """The phone's firewall (kernel/n90-net), before Wi-Fi can come up.
+
+    Only USB from this computer and the tailnet reach the phone's services.
+    Not a boot failure: without it the phone is as reachable on Wi-Fi as it
+    was before, and Soy's Security reading says Off.
+    """
+    result = sp.run([sys.executable, str(ROOT / 'kernel/n90-net/deploy.py'),
+                     '--ssh-config', str(SSH_CONFIG), '--host', 'iphone4-usb',
+                     '--tailnet-host', 'iphone4'], capture_output=True, timeout=240)
+    log(run, 'firewall_loaded' if result.returncode == 0 else 'firewall_failed',
+        detail=(result.stdout or result.stderr).decode().strip()[-300:])
+
+
+OFFLINE = ('n90-llm', 'tokenizer.bin', 'stories15M-q80.bin')
+
+
+def deploy_offline(run):
+    """What the phone does without a connection (kernel/n90-offline): its own
+    scene publisher, the story writer with its model, and this computer's
+    time zone, so the phone's own pages tell local time. Not a boot failure.
+    """
+    out = ROOT / 'output/offline'
+    sources = {f'opt/n90-offline/{name}': (out / name, 0o755 if name == 'n90-llm' else 0o644)
+               for name in OFFLINE}
+    sources['usr/sbin/n90-scene'] = (ROOT / 'kernel/n90-offline/scene.sh', 0o755)
+    sources['usr/sbin/n90-story'] = (ROOT / 'kernel/n90-offline/story.sh', 0o755)
+    sources['etc/localtime'] = (Path('/etc/localtime').resolve(), 0o644)
+    missing = [str(path) for path, _ in sources.values() if not path.exists()]
+    if missing:
+        log(run, 'offline_skipped', reason='missing ' + ', '.join(missing))
+        return
+    blob = io.BytesIO()
+    with tarfile.open(fileobj=blob, mode='w') as tar:
+        for name, (path, mode) in sources.items():
+            data = path.read_bytes()
+            info = tarfile.TarInfo(name)
+            info.size, info.mode, info.mtime = len(data), mode, int(time.time())
+            tar.addfile(info, io.BytesIO(data))
+    sent = ssh('iphone4-usb', 'tar -xf - -C /', stdin=blob.getvalue(), timeout=120)
+    log(run, 'offline_installed' if sent.returncode == 0 else 'offline_failed',
+        detail=sent.stderr.decode()[-200:])
 
 
 def deploy_dhcp_script(run):
