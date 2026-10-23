@@ -99,6 +99,11 @@ connection to the phone's tailnet address on port 22 still succeeded. SSH
 over USB and over the tailnet kept working, and the scan raised the
 `blocked` counter by tens of thousands of packets.
 
+At the reboot that installed the merged code (11:03 UTC), the boot pass
+loaded the firewall at 11:09:37 with fresh USB and tailnet SSH confirming
+it, and installed Wi-Fi after that; a connection to port 22 on the phone's
+Wi-Fi address from this computer then timed out.
+
 Not covered: the phone's own outgoing traffic is not limited, and any of
 Boris's tailnet devices can reach the SSH port (a key is still required).
 A Tailscale access rule could narrow that to this computer.

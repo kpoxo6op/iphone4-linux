@@ -84,4 +84,6 @@ n90-scene put page.md     # publish any scene marked "source: phone ..."
 it to the scene library as "Written on the phone: story" and found the phone
 in step. The offline trigger was exercised with a fake clock and fake
 connectivity: one story ten minutes into each stretch offline, none while
-Wi-Fi or the laptop answered.
+Wi-Fi or the laptop answered. The boot pass after the next reboot installed
+the model and both tools (`offline_installed`), and the phone's clock read
+NZDT.
