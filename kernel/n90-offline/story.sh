@@ -13,6 +13,9 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 DIR=/opt/n90-offline
 MODEL=stories15M-q80.bin
 
+# A hot phone sheds optional work (kernel/n90-battery, /run/thermal/hot).
+[ -e /run/thermal/hot ] && { echo "n90-story: the phone is hot; not now" >&2; exit 3; }
+
 case $(date +%H) in
 0[5-9] | 1[01]) start="One morning" ;;
 1[2-6]) start="One afternoon" ;;

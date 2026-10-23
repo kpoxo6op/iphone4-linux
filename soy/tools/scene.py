@@ -548,7 +548,7 @@ def journal_summary(directory, day, labels):
         return f'No journal for {day}.'
     events.sort(key=lambda e: e['t'])
     reading, furthest, wakes, sleeps, restarts, battery, oopses = {}, {}, {}, {}, {}, [], []
-    shutdowns, stops, firewall = [], [], []
+    shutdowns, stops, firewall, updates = [], [], [], []
     scene, awake, since, last = None, False, None, None
 
     def add(name, seconds):
@@ -592,6 +592,8 @@ def journal_summary(directory, day, labels):
             stops.append(e)
         elif kind == 'firewall':
             firewall.append(e)
+        elif kind in ('ota', 'charge'):
+            updates.append(e)
         last = t
     if awake:
         end = min(time.time(), last + 60) if day == time.strftime('%Y-%m-%d') else last
@@ -622,8 +624,15 @@ def journal_summary(directory, day, labels):
     out.append('Restarted by keep: ' + (times(restarts) if restarts else 'nothing'))
     if firewall:
         out.append(f"Firewall: {firewall[-1].get('state')} since {clock(firewall[-1]['t'])}")
+    for e in updates:
+        if e.get('e') == 'ota':
+            out.append(f"Update {e.get('version')}: {e.get('state')} at {clock(e['t'])}")
+        else:
+            out.append(f"Charging {'normal' if not e.get('hold') else e.get('hold')} at "
+                       f"{clock(e['t'])}, battery about {e.get('celsius', 0):.0f} °C")
     for e in shutdowns:
-        out.append(f"Switched itself off at {clock(e['t'])}: battery low "
+        out.append(f"Switched itself off at {clock(e['t'])}: too hot" if e.get('why') == 'hot' else
+                   f"Switched itself off at {clock(e['t'])}: battery low "
                    f"({e.get('mv', 0) / 1000:.2f} V)")
     if oopses:
         out.append('Kernel oops at ' + ', '.join(clock(t) for t in oopses) +
@@ -633,11 +642,13 @@ def journal_summary(directory, day, labels):
                'oops': 'restarted itself after a kernel oops',
                'off': 'was switched off',
                'reboot': 'was restarted on purpose',
+               'hot': 'switched itself off, too hot',
                }.get(e.get('why'), 'stopped without warning (a crash, the watchdog, '
                                    'a flat battery or a hard reset)')
         volts = f", {e['mv'] / 1000:.2f} V" if e.get('mv', -1) > 0 else ''
+        doing = f" ({e['doing']})" if e.get('doing') else ''
         out.append(f"Before the boot at {clock(e['t'])}: {how}; "
-                   f"last seen {clock(e['at'])}{volts}")
+                   f"last seen {clock(e['at'])}{volts}{doing}")
     return '\n'.join(out)
 
 

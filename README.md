@@ -45,6 +45,12 @@ controller now stops too ([idle display](docs/soy/idle-display.md#display-scanou
 and the phone can [write and publish its own pages](kernel/n90-offline/README.md)
 without a connection, with a small story model running on the phone.
 
+On 24 October it learned to keep [network time](kernel/n90-time/README.md)
+and its own clock's drift, to [hold charging](kernel/n90-battery/README.md#charging-and-heat)
+when the battery is too hot or cold, to say what it was doing when it last
+stopped, and to [update itself over the air](kernel/n90-ota/README.md) from
+signed GitHub releases, rolling back a release that leaves it unhealthy.
+
 It boots into RAM from Platt over USB, and Platt boots it again after a
 reboot. It gets Internet over Wi-Fi or through Platt's USB connection.
 Booting without the laptop and persistent installation are still work ahead.

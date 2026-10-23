@@ -6,7 +6,7 @@ OUT ?= ../../output/battery
 
 $(OUT)/n90-battery: n90-battery.c
 	mkdir -p $(OUT)
-	$(CC) -O2 -Wall -Wextra -static -o $@ $<
+	$(CC) -O2 -Wall -Wextra -static -o $@ $< -lm
 
 .PHONY: clean
 clean:

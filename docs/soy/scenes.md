@@ -79,11 +79,15 @@ follows.
 | Key | Value |
 | --- | --- |
 | `battery.percent` | `82%`; `~82%` when estimated from voltage (on battery only); `—` without a reading |
-| `battery.state` | `Charging`, `On battery`, `On USB power`, `Full`… or `Battery unavailable` |
+| `battery.state` | `Charging`, `On battery`, `On USB power`, `Full`, `Charging gently: warm`, `Not charging: too hot`… or `Battery unavailable` |
 | `battery.voltage` | `3.92 V`, or `—` |
+| `battery.temp`, `phone.temp` | the battery's and the warmest board sensor's temperature, estimated: `~29 °C`, or `—` ([charging and heat](../../kernel/n90-battery/README.md#charging-and-heat)) |
 | `net.link` | the interface carrying the default route, `USB` for the cable |
 | `net.wifi` | `Connected`, `Not connected` or `Unavailable` |
 | `net.rx`, `net.tx` | receive and send rates, such as `12 KiB/s` |
+| `time.clock`, `time.date` | local time, such as `09:41` and `Sat 24 Oct`; `—` while the clock is unset |
+| `time.sync` | where the time came from: `Network time, 4 min ago`, `From the phone's own clock`, `Set by the laptop`, `Not synced` or `Not set` ([time](../../kernel/n90-time/README.md)) |
+| `system.software` | what runs and how it arrived: `a2799a1, from the laptop` or `2026-10-24-1a2b3c4, over the air` ([updates](../../kernel/n90-ota/README.md)), or `—` |
 | `net.firewall` | `On`, `Off` or `Not installed` ([firewall](../../kernel/n90-net/README.md#firewall)) |
 | `net.blocked` | packets addressed to the phone that the firewall dropped since it loaded, or `—` |
 | `memory.used`, `memory.available` | RAM |

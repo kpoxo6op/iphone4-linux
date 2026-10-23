@@ -13,6 +13,7 @@
 #include <lvgl/lvgl.h>
 #include <math.h>
 #include <poll.h>
+#include <pthread.h>
 #include <sched.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -1652,21 +1653,88 @@ static void write_trace(void) {
   }
   fclose(f);
 }
-static int compare_double(const void *a, const void *b) {
-  double x = *(const double *)a, y = *(const double *)b;
-  return (x > y) - (x < y);
+/* The k-th smallest of n values, rearranging them (Hoare's selection).
+ * qsort of the 256 samples took 0.6-0.7 ms on the phone. */
+static double select_kth(double *v, int n, int k) {
+  int lo = 0, hi = n - 1;
+  while (lo < hi) {
+    double pivot = v[(lo + hi) / 2];
+    int i = lo, j = hi;
+    while (i <= j) {
+      while (v[i] < pivot)
+        i++;
+      while (v[j] > pivot)
+        j--;
+      if (i <= j) {
+        double t = v[i];
+        v[i++] = v[j];
+        v[j--] = t;
+      }
+    }
+    if (k <= j)
+      hi = j;
+    else if (k >= i)
+      lo = i;
+    else
+      break;
+  }
+  return v[k];
+}
+/* status.json is written ten times a second for the tools that watch
+ * motion. Opening, writing and renaming the file took 0.57 ms on the phone,
+ * and between two long page frames that pushed the interval past 16.67 ms
+ * (23 October). The main loop now only formats it; a writer thread at normal
+ * priority, which the real-time main thread preempts, puts it in place. */
+static pthread_mutex_t status_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_cond_t status_ready = PTHREAD_COND_INITIALIZER;
+static char *status_text, status_path[600], status_tmp[600];
+static size_t status_len;
+static int status_writer_started;
+static void *status_writer(void *unused) {
+  (void)unused;
+  for (;;) {
+    pthread_mutex_lock(&status_lock);
+    while (!status_text)
+      pthread_cond_wait(&status_ready, &status_lock);
+    char *text = status_text;
+    size_t len = status_len;
+    status_text = NULL;
+    pthread_mutex_unlock(&status_lock);
+    int fd = open(status_tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+      int ok = write(fd, text, len) == (ssize_t)len;
+      close(fd);
+      if (ok)
+        rename(status_tmp, status_path);
+    }
+    free(text);
+  }
+  return NULL;
+}
+static void start_status_writer(void) {
+  pthread_attr_t attr;
+  pthread_t thread;
+  struct sched_param normal = {0};
+  path(status_path, sizeof status_path, rundir, "status.json");
+  path(status_tmp, sizeof status_tmp, rundir, "status.new");
+  pthread_attr_init(&attr);
+  pthread_attr_setinheritsched(&attr, PTHREAD_EXPLICIT_SCHED);
+  pthread_attr_setschedpolicy(&attr, SCHED_OTHER);
+  pthread_attr_setschedparam(&attr, &normal);
+  pthread_attr_setdetachstate(&attr, PTHREAD_CREATE_DETACHED);
+  status_writer_started = !pthread_create(&thread, &attr, status_writer, NULL);
+  pthread_attr_destroy(&attr);
 }
 static void status(void) {
-  char p[600], tmp[600];
-  path(p, sizeof p, rundir, "status.json");
-  path(tmp, sizeof tmp, rundir, "status.new");
-  FILE *f = fopen(tmp, "w");
+  char *text = NULL;
+  size_t len = 0;
+  FILE *f = open_memstream(&text, &len);
   if (!f)
     return;
   int n = frames < 256 ? frames : 256;
   double sorted[256];
   memcpy(sorted, render_samples, n * sizeof(double));
-  qsort(sorted, n, sizeof(double), compare_double);
+  double p95 = n ? select_kth(sorted, n, (n - 1) * 95 / 100) : 0;
   fprintf(f,
           "{\"backend\":\"%s\",\"toolkit\":\"LVGL "
           "9.6.0\",\"scene\":\"%s\",\"scroll\":%d,\"page_x\":%d,\"content_"
@@ -1691,7 +1759,7 @@ static void status(void) {
           soy_input_devices(0), soy_input_devices(1),
           soy_input_devices(0) - soy_input_devices(1), soy_input_events(),
           soy_input_drops(), input_sequence, pinch_events, tap_events, frames,
-          frames ? render_sum / frames : 0, n ? sorted[(n - 1) * 95 / 100] : 0,
+          frames ? render_sum / frames : 0, p95,
           render_max, latency_max, frames ? transfer_sum / frames : 0,
           transfer_max, blank_screen ? "blanked" : "awake", idle_seconds,
           lv_display_get_inactive_time(display),
@@ -1703,8 +1771,28 @@ static void status(void) {
   fprintf(f, "],\"bundle_loads\":%u,\"bundle_failures\":%u,"
              "\"bundle_error\":\"%s\"}\n",
           bundle_loads, bundle_failures, bundle_error);
-  fclose(f);
-  rename(tmp, p);
+  if (fclose(f) || !text)
+    return free(text);
+  if (!status_writer_started) {
+    /* No thread (it failed to start): write it here, as before. */
+    char p[600], tmp[600];
+    path(p, sizeof p, rundir, "status.json");
+    path(tmp, sizeof tmp, rundir, "status.new");
+    int fd = open(tmp, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    if (fd >= 0) {
+      int ok = write(fd, text, len) == (ssize_t)len;
+      close(fd);
+      if (ok)
+        rename(tmp, p);
+    }
+    return free(text);
+  }
+  pthread_mutex_lock(&status_lock);
+  free(status_text); /* the writer had not taken the previous one yet */
+  status_text = text;
+  status_len = len;
+  pthread_cond_signal(&status_ready);
+  pthread_mutex_unlock(&status_lock);
 }
 static void command(char *s) {
   if (!strcmp(s, "sleep")) {
@@ -1911,6 +1999,7 @@ int main(int argc, char **argv) {
     if (sched_setscheduler(0, SCHED_FIFO, &rt))
       perror("SCHED_FIFO");
   }
+  start_status_writer();
   double nextstats = now() + .2, nextstatus = 0, prepare_after = now() + .15;
   unsigned stat_phase = 0;
   char commands[4096];
@@ -1946,6 +2035,7 @@ int main(int argc, char **argv) {
       case 3:
         stats_network();
         stats_firewall();
+        stats_time();
         break;
       case 4:
         soy_input_scan();
@@ -2081,6 +2171,7 @@ int main(int argc, char **argv) {
         }
     }
   }
+  status_writer_started = 0; /* the last one before exit is written here */
   status();
   soy_input_close();
   close(ctl);

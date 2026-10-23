@@ -94,25 +94,80 @@ n90-battery clock load    # set the system time from the PMU
 
 The phone keeps nothing across a reboot, but the PMU does: its seconds
 counter runs while the phone is off, and its general-purpose bytes keep their
-values. `serve` writes a heartbeat to `0x89`–`0x8c` every minute: a state
-(`0xa1` running), the counter in minutes (low 16 bits) and the battery
-voltage (10 mV steps above 3 V). A planned stop writes its own state first:
-`0xa2` low battery, `0xa3` keep restarting after an oops (`mark oops`),
-`0xa4` poweroff, `0xa5` a restart on purpose (`mark reboot`).
+values. `serve` writes a heartbeat to `0x89`–`0x8c` every minute: a state, the
+counter in minutes (low 16 bits) and the battery voltage (10 mV steps above
+3 V). Since 24 October the heartbeat's state also says what the phone was
+doing: `0xb0` plus bit 0 screen on, bit 1 on USB, bit 2 charging, bit 3 hot
+(`0xa1`, plain running, from older builds still reads). A planned stop
+writes its own state first: `0xa2` low battery, `0xa3` keep restarting after
+an oops (`mark oops`), `0xa4` poweroff, `0xa5` a restart on purpose (`mark
+reboot`), `0xa6` too hot.
 
 At the next boot the laptop's boot pass runs `n90-battery lastrun` before
 `serve` starts. It turns the record into a `last_stop` event in Soy's
 journal and marks it reported (`0xa0`), so it is told once. A heartbeat
 state still there means the phone stopped without warning: a crash, the
 watchdog, a battery that gave out first, or a hard reset, last seen within
-a minute of the recorded time. `scene.py journal` prints it as, for
-example, "Before the boot at 19:22: was restarted on purpose; last seen
-19:12, 4.17 V".
+a minute of the recorded time, and now with what it was doing: "last stop:
+unexpected, last seen 20:37 UTC, 4110 mV; screen on, on USB, charging" (read
+back on 24 October from a hand-written `0xb7`). `scene.py journal` prints
+it as, for example, "Before the boot at 19:22: was restarted on purpose;
+last seen 19:12, 4.17 V".
+
+Those 16 PMU bytes are the only memory on the phone that survives a reset.
+On 24 October, markers written across the 128 KiB that the device tree
+reserves for ramoops (`0x0ffe0000`) read zero after a reboot: the phone
+waits in DFU mode for minutes while the laptop boots it, and nothing
+refreshes its RAM then. So after a stop the laptop's boot pass writes a
+crash report from what the follower last copied (the kernel log, keep's log
+and the journal up to a minute past the last heartbeat) to
+`.runtime/phone/private/crashes/`; a stop that was planned gets none.
 
 On 22 October the record survived a restart, DFU mode and the laptop's boot
 unchanged; iBoot's boot-voltage bytes beside it (`0x8d`–`0x8e`) changed.
 iBoot names `0x80`–`0x83`, `0x8d`–`0x8f`; the clock offset uses
 `0x84`–`0x88`; `0x89`–`0x8c` read zero before.
+
+## Charging and heat
+
+Nothing watched the battery's temperature, and charging a lithium cell above
+45 °C or below 0 °C wears it; a worn cell also heats more as it charges.
+
+`serve` now reads the PMU's temperature channels every 10 s: tbat (2) and
+tdev1-4 (11-14), which the N90 device tree places at the SIM, the RF power
+amp, the camera and the A4 ("H3P proximity"). Each reads lower as it warms.
+On 24 October two busy processes for three minutes took tdev4 from 568 to
+484 counts, the camera's from 565 to 516, and tbat from 712 to 705, and they
+recovered as the phone cooled.
+
+The scale is an assumption, not documentation: 50 µA into a 10 kΩ NTC
+(B 3435 K), read against 2.5 V, as Dialog's other PMUs measure TBAT. It puts
+the idle phone on its charger at 28-34 °C, which is plausible, while a scale
+off by half or double would read near 13 °C or 46 °C. Read the temperatures
+as estimates within about 5 °C. They are in
+`/run/power_supply/battery/temp` (tenths of a degree, with `temp_source`
+`estimate`) and `/run/thermal/{sim,rf,camera,soc}`, and Soy shows
+`{{battery.temp}}` and `{{phone.temp}}`.
+
+| Battery | Charging |
+| --- | --- |
+| below 40 °C | normal: 500 mA in |
+| 40-45 °C | gentle: 300 mA in, about 100 mA of it into the battery |
+| 45 °C and above, or 0 °C and below | held: the USB input limit drops to 100 mA, below what the phone uses, until it is back under 40 °C (or over 3 °C) |
+
+`charge_hold` (`warm`, `hot` or `cold`) and Soy's `{{battery.state}}` say
+which; each change goes in the journal. The low-battery rescue does not
+override a hold. Without frequency scaling on this kernel, heat cannot slow
+the A4 down; at 70 °C on the A4's sensor or 50 °C in the battery the phone
+creates `/run/thermal/hot` and sheds optional work (`n90-story` waits), and
+at 90 °C or 60 °C for 30 s it notes the reason and switches itself off
+(stop state `0xa6`).
+
+On the phone, with the hold threshold lowered to 28 °C for the test
+(`N90_CHARGE_HOT`), the battery at 29.2 °C held charging: the limit went
+from 500 to 100 mA and `status` read Not charging; with the normal
+thresholds back, charging and the 500 mA limit returned within 20 s. The
+heat shutdown has not been triggered on purpose.
 
 ## Low battery
 

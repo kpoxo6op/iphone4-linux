@@ -247,6 +247,29 @@ landing in the gap just before it. Next: take that write off the frame path
 while motion is drawing frames back to back, without starving the touch
 checks that read `status.json` during a held contact.
 
+## 24 October 2026: status writes off the frame path
+
+On the phone a status write cost 0.6-0.7 ms for qsort of the 256 frame
+samples, 0.57 ms to open, write and rename the file, and 0.03 ms to format
+it. Soy now finds the p95 by selection and formats the file on the main
+thread (0.3-0.5 ms), and a writer thread at normal priority, which the
+real-time main thread preempts, puts it in place. The build also adds the
+time, temperature and software readings. `check_frames.py --host
+iphone4-usb`, Boris's scene library, firewall loaded:
+
+| Surface | Average fps | p95 | p99 | Worst | Misses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reading | 104.9 | 10.7 ms | 11.2 ms | 11.4 ms | 0 / 1085 |
+| Pages, four runs | 82.5-84.0 | 12.4-13.4 ms | 14.3-14.7 ms | 15.8-16.6 ms | 0 / 3434 |
+| Pinch in | 83.3 | 13.4 ms | 14.0 ms | 15.0 ms | 0 / 866 |
+| Pinch out | 96.6 | 12.7 ms | 13.0 ms | 13.3 ms | 0 / 993 |
+| Top sheet | 121.0 | 8.5 ms | 8.8 ms | 11.5 ms | 0 / 1245 |
+| Bottom sheet | 90.0 | 12.4 ms | 13.0 ms | 13.7 ms | 0 / 921 |
+
+**All six pass, and pages passed four runs in a row** where it had missed
+in three of eight. The slowest page frame left is a 13.8 ms render with no
+status write near it, so the margin on pages is still thin.
+
 ## Latest phone measurement — still fails
 
 21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary

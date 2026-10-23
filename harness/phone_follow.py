@@ -38,6 +38,7 @@ LOGS = PRIVATE / 'logs'
 STATE = LOGS / 'state.json'
 # Soy's reading position and text size per scene; the boot pass restores it.
 POSITIONS = PRIVATE / 'soy-positions'
+FREQ = PRIVATE / 'time-freq-ppm'
 USB_ADDRESS = '10.84.4.1'  # the laptop's end of the phone's USB network
 # Service logs on the phone; keep.sh and the boot start the services this way.
 FILES = {
@@ -148,12 +149,16 @@ def copy_files(link, offsets):
 
 
 def copy_positions(link):
-    """Keep the latest copy of Soy's positions for the next boot."""
-    text = link.run('cat /run/soy/positions 2>/dev/null; true', timeout=20)
-    if text and (not POSITIONS.exists() or POSITIONS.read_bytes() != text):
-        temp = POSITIONS.with_suffix('.tmp')
-        temp.write_bytes(text)
-        temp.replace(POSITIONS)
+    """Keep the latest copies of Soy's positions and the clock's learned
+    frequency (kernel/n90-time) for the next boot."""
+    out = link.run('cat /run/soy/positions 2>/dev/null; echo @@; '
+                   'cat /run/time/freq_ppm 2>/dev/null; true', timeout=20)
+    text, _, freq = out.partition(b'@@\n')
+    for path, data in ((POSITIONS, text), (FREQ, freq.strip())):
+        if data and (not path.exists() or path.read_bytes() != data):
+            temp = path.with_suffix('.tmp')
+            temp.write_bytes(data)
+            temp.replace(path)
 
 
 def adopt_scenes(link, state):

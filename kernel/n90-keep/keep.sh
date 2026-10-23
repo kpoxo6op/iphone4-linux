@@ -3,7 +3,8 @@
 #
 # Busybox init respawns this script (an inittab entry added at boot), so it
 # survives too. Every 2 s it checks Soy, the touch driver, the battery
-# reader, the Wi-Fi keeper and the watchdog kicker. One that has been gone for 6 s is started
+# reader, the Wi-Fi keeper, the watchdog kicker, the clock keeper and
+# updates. One that has been gone for 6 s is started
 # the same way the boot starts it. Deploy tools that stop a service on
 # purpose write an expiry time (epoch seconds) to /run/keep/hold-NAME first.
 # When Soy needs a third restart within two minutes, the release before the
@@ -107,6 +108,14 @@ start() {
 		nohup /usr/sbin/n90-wifi-keep >/dev/null 2>&1 </dev/null &
 		echo $! > /run/keep/wifi.pid
 		say "started Wi-Fi keeper" ;;
+	time)
+		nohup /usr/sbin/n90-time serve >/dev/null 2>&1 </dev/null &
+		echo $! > /run/keep/time.pid
+		say "started the clock keeper" ;;
+	ota)
+		nohup /usr/sbin/n90-ota serve >/dev/null 2>&1 </dev/null &
+		echo $! > /run/keep/ota.pid
+		say "started updates" ;;
 	esac
 }
 
@@ -117,6 +126,8 @@ installed() {
 	battery) [ -x /usr/sbin/n90-battery ] ;;
 	wdt) [ -x /usr/sbin/n90-wdt ] ;;
 	wifi) [ -x /usr/sbin/n90-wifi-keep ] ;;
+	time) [ -x /usr/sbin/n90-time ] ;;
+	ota) [ -x /usr/sbin/n90-ota ] ;;
 	esac
 }
 
@@ -177,12 +188,13 @@ check_usb() {
 }
 
 comm_soy=soy comm_touch=n90-touch comm_battery=n90-battery comm_wdt=n90-wdt
-comm_wifi=n90-wifi-keep
+comm_wifi=n90-wifi-keep comm_time=n90-time comm_ota=n90-ota
 
 say "keep started"
 missing_soy=0 missing_touch=0 missing_battery=0 missing_wdt=0 missing_wifi=0
+missing_time=0 missing_ota=0
 while :; do
-	for s in wdt soy touch battery wifi; do
+	for s in wdt soy touch battery wifi time ota; do
 		eval "m=\$missing_$s"
 		eval "comm=\$comm_$s"
 		if ! installed "$s" || held "$s" || alive "$s" "$comm"; then
