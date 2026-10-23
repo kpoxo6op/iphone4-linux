@@ -134,6 +134,17 @@ within about 30 seconds; any later `put`, `publish` or `sync` also brings it
 over, and every boot installs the library's last saved scenes. If those fail on the phone, the boot falls back to
 the default scenes so the screen is never empty.
 
+## Scenes the phone writes itself
+
+Programs on the phone can publish without the laptop through `n90-scene`
+([kernel/n90-offline](../../kernel/n90-offline/README.md)), the same checked,
+atomic switch `put` makes. Such scenes say `source: phone …` in their
+frontmatter. The first is the Story scene that the phone writes with a small
+local model after ten minutes without a connection. When the laptop next
+reaches the phone, the follower and every `sync` copy these scenes into the
+library ("Written on the phone: …" in its history), so they survive a reboot
+and later publishes keep them.
+
 ## Where you were
 
 Each scene's reading position and text size survive restarts and reboots.

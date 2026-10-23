@@ -38,6 +38,13 @@ October all six motion surfaces passed the strict
 [60 fps gate](docs/soy/performance.md) on the phone, with no frame interval
 over 16.67 ms; the gate stays a release requirement for every change.
 
+On 23 October the phone got a [firewall](kernel/n90-net/README.md#firewall):
+on Wi-Fi and hotspots it answers nothing but Tailscale, and SSH works only
+over USB from Platt and over the tailnet. With the screen off the display
+controller now stops too ([idle display](docs/soy/idle-display.md#display-scanout)),
+and the phone can [write and publish its own pages](kernel/n90-offline/README.md)
+without a connection, with a small story model running on the phone.
+
 It boots into RAM from Platt over USB, and Platt boots it again after a
 reboot. It gets Internet over Wi-Fi or through Platt's USB connection.
 Booting without the laptop and persistent installation are still work ahead.

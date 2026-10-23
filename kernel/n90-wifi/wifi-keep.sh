@@ -51,11 +51,25 @@ dhcp_running() {
 }
 
 say "keep started"
-wait=20 was=
+wait=20 was= offline=
 while :; do
 	# The firewall goes up before the phone joins a network, and the screen's
 	# firewall reading stays current (kernel/n90-net).
 	[ -x /usr/sbin/n90-firewall ] && n90-firewall check
+	# Ten minutes with no connection at all, no Wi-Fi and no laptop on the
+	# cable: the phone writes a page by itself (kernel/n90-offline), once for
+	# each stretch offline.
+	if [ -x /usr/sbin/n90-story ]; then
+		if [ -n "$was" ] || ping -c 1 -W 2 10.84.4.1 > /dev/null 2>&1; then
+			offline=
+		elif [ -z "$offline" ]; then
+			offline=$(date +%s)
+		elif [ "$offline" != written ] && [ $(( $(date +%s) - offline )) -ge 600 ]; then
+			offline=written
+			say "ten minutes offline: writing a story"
+			n90-story > /run/n90-story.log 2>&1 &
+		fi
+	fi
 	# No known network: leave the radio off.
 	if [ ! -s "$NETS" ]; then
 		sleep 30

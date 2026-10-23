@@ -54,6 +54,8 @@ accurate source of percentage.
 ```sh
 make                      # output/battery/n90-battery
 n90-battery probe         # supply register, power NVRAM, every ADC channel
+n90-battery meter         # the phone's draw on USB (stop serve first)
+n90-battery adc 5 400 signed   # average one ADC channel
 n90-battery serve         # files under /run/power_supply every 10 s
 n90-battery poweroff      # switch the phone off through the PMU
 ```
@@ -114,12 +116,19 @@ iBoot names `0x80`–`0x83`, `0x8d`–`0x8f`; the clock offset uses
 
 ## Low battery
 
-On battery, three readings in a row (30 s) under 3.45 V, about 2 % on the
-open-circuit curve, make `serve` switch the phone off before the battery
-browns it out: it notes the shutdown in Soy's journal, waits 20 s so the
-laptop's follower can copy the logs if it can reach the phone, and calls the
-power-off unless USB power came back meanwhile. Power then starts the phone
-into DFU mode, where the laptop boots it.
+Three readings in a row (30 s) under 3.45 V, about 2 % on the open-circuit
+curve, make `serve` switch the phone off before the battery browns it out:
+it notes the shutdown in Soy's journal, waits 20 s so the laptop's follower
+can copy the logs if it can reach the phone, and calls the power-off unless
+the battery is charging again by then. Power then starts the phone into DFU
+mode, where the laptop boots it.
+
+Until 23 October this only happened on battery. On 22-23 October a USB input
+limit left at 100 mA, less than the phone uses, ran the battery flat while
+plugged in (unexpected stop at 07:49 NZDT, at or below 3.0 V). Now a USB
+source that is not charging the battery counts too, and before that, below
+3.6 V on USB without charging, `serve` asks for 500 mA again and restarts
+the charger, at most every five minutes.
 
 `poweroff` is openiBoot's `pmu_poweroff()` for the A4: mask the wake events
 in `0x0c`–`0x11`, drive the PMU GPIO outputs low, set `0x12` (OOCSHDWN).
@@ -150,10 +159,48 @@ most of it is hardware that stays powered at full speed: no processor clock
 or voltage scaling, the display pipeline and panel still running while
 blanked, and possibly other peripherals or the modem.
 
+### Measuring without an ammeter, 23 October
+
+`n90-battery meter` lowers the USB input limit a step at a time until the
+charger stops: the draw lies between the last limit that still charged and
+the first that did not, and the charge current at the last step narrows it.
+Below 200 mA the limit moves in 10 mA steps, above it in 50 mA steps. It needs
+USB power, stops nothing but the charge, puts the limit back afterwards (also
+on SIGINT, SIGTERM and SIGHUP), and must not run beside `serve`, which shares
+the PMU's ADC. `meter 300` instead holds one limit and averages the charge
+current; near a full battery the charger tapers and that reading drifts, so
+the stepping meter is the one to trust. `n90-battery adc 5 400 signed`
+averages the battery-current channel (`ibat`), which reads as a signed
+12-bit value, positive while the battery discharges, about one count per mA
+(105 counts across a 100 mA step of the input limit), and noisy enough to
+need hundreds of readings.
+
+With these, the screen blanked, on the laptop's USB:
+
+| Change | Result |
+|---|---|
+| Baseline | charging stopped between 200 and 250 mA in five runs (estimates 182-227 mA) |
+| Display controller's scanout stopped | stopped between 150 and 180 mA in two of three runs; battery current at a 50 mA limit 87 counts against 120, about 30 mA less |
+| Wi-Fi interface down | 188 against 206 mA |
+| Touch driver stopped, then touch power (LDO 12) off | no change |
+| TV-out and camera supplies (LDOs 2 and 10) off | 177 against 178 mA at a fixed limit |
+| Scanout and the DSI high-speed clock off | 175 mA, not clearly below scanout alone |
+
+The scanout result is now in Soy: it stops the CLCD while blanked
+([idle display](../../docs/soy/idle-display.md#display-scanout)). Neither
+the LDOs nor touch power are worth switching. The absolute numbers carry the
+meter's uncertainty: the input limit's real current and the `ich` scale are
+inferred, not calibrated against an instrument. They also do not settle the
+battery's capacity. Running flat in about twelve hours behind a 100 mA limit
+fits a 0.5 Ah battery with a 140 mA draw as well as a 1.3 Ah battery with
+210 mA, so the earlier "worn to a third" estimate is not established.
+
 ## Next
 
-1. Gas gauge: HDQ over UART5 for the real percentage, current and capacity.
-2. Find the steady 210 mA: PMU rails and PMGR clock gates that stay on,
-   the processor clock when idle, the display pipeline while blanked, and
-   the modem's power state. Register experiments belong on the laptop's
-   USB, where a hang recovers without a button.
+1. Gas gauge: HDQ over UART5 for the real percentage, current and capacity,
+   and the answer on whether the battery is worn.
+2. A timed run on battery with the screen off, now that scanout stops.
+3. What else stays powered: the A4 at a fixed 800 MHz with no voltage
+   scaling, the panel itself (only the backlight goes off), USB while
+   plugged in. Register experiments belong on the laptop's USB, where a hang
+   recovers without a button.

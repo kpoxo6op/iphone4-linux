@@ -214,6 +214,26 @@ is a preview frame in the middle of the gesture, and pages reach 14.9 ms.
 These are virtual contacts and completed damage copies; panel scanout and
 the glass are not measured.
 
+## 23 October 2026: firewall and blanked scanout
+
+Soy now stops the display controller while blanked and reads two firewall
+values once a second with the network readings
+([idle display](idle-display.md#display-scanout),
+[firewall](../../kernel/n90-net/README.md#firewall)). The phone's firewall
+was loaded for this run. `check_frames.py --host iphone4-usb`, Boris's scene
+library, lean kernel `e899dceb`:
+
+| Surface | Average fps | p95 | p99 | Worst | Misses |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| Reading | 106.3 | 10.7 ms | 11.1 ms | 12.4 ms | 0 / 1102 |
+| Pages | 84.9 | 13.2 ms | 14.2 ms | 16.3 ms | 0 / 879 |
+| Pinch in | 83.5 | 13.6 ms | 14.4 ms | 15.3 ms | 0 / 872 |
+| Pinch out | 95.1 | 13.1 ms | 13.9 ms | 15.7 ms | 0 / 992 |
+| Top sheet | 120.9 | 8.8 ms | 9.7 ms | 11.9 ms | 0 / 1245 |
+| Bottom sheet | 92.3 | 12.5 ms | 13.3 ms | 14.7 ms | 0 / 947 |
+
+**All six pass.** The margin on pages is thin again: 16.3 ms worst.
+
 ## Latest phone measurement — still fails
 
 21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary
