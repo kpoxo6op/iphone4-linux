@@ -270,6 +270,18 @@ iphone4-usb`, Boris's scene library, firewall loaded:
 in three of eight. The slowest page frame left is a 13.8 ms render with no
 status write near it, so the margin on pages is still thin.
 
+**Pages fails again after the reboot that installed the merged build**
+(`5a9585e`, the first OTA release). Reading, both pinches and both sheets
+passed; pages missed 7, 1 and 4 frames in three runs (worst 18.0 ms), with
+render CPU p99 at 14.7 ms against 13.1-13.5 ms before. Boris's library had
+grown to ten pages with the new Now page, and Soy's pixel cache stood at
+156 MiB of its 160 MiB budget. With the Now page taken out for a test (nine
+pages, cache 139 MiB at the start), pages missed 2, 0 and 0 frames and render
+CPU p99 fell to 13.5-13.7 ms. So the cache filling up costs about a
+millisecond at p99, and the rest is renders near the budget. Pages is not
+passing the gate. Next: a cache policy that keeps neighbouring pages' images
+instead of every page's five text sizes, then measure again.
+
 ## Latest phone measurement — still fails
 
 21 October 2026, N90AP, Linux 6.17.0-rc1, ARM binary

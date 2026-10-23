@@ -78,3 +78,10 @@ from `758c4d6` (24 files, 8.1 MB) was verified, installed and found healthy
 keeper exits at once was installed, failed the health check ("n90-wifi-keep
 is not running") and was rolled back: the phone kept `758c4d6`, the real
 keeper came back and Wi-Fi stayed connected.
+
+From GitHub: the first release,
+[phone-2026-10-23-5a9585e](https://github.com/kpoxo6op/iphone4-linux/releases/tag/phone-2026-10-23-5a9585e)
+(24 files, 8.1 MB), was published from the merge of #44. The phone, booted
+by the laptop from the same commit, checked by itself five minutes after
+keep started the updater: it fetched and verified the manifest over HTTPS
+and found it was up to date (`laptop-5a9585e`).

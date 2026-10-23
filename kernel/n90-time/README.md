@@ -46,3 +46,7 @@ whole-second `date -s`, not drift. A slew of that size would have taken the
 kernel more than 13 minutes, so offsets over 50 ms are now stepped. After
 the correction the PMU-based clock read one second behind network time, its
 one-second resolution.
+
+After the next reboot (20:48 UTC) the boot pass installed it and keep started
+it; its first sync, a second later, found the clock 1117 ms behind and
+corrected it. The boot pass still sets whole seconds; this is why.
