@@ -39,6 +39,8 @@ static void *mapped = MAP_FAILED;
  */
 static uint8_t *scanout = MAP_FAILED, *shadow;
 static int memfd = -1;
+#define CLCD_REGS 0x89200000UL
+static volatile uint32_t *clcd = MAP_FAILED;
 
 static unsigned long scanout_base(void) {
   FILE *f = fopen("/proc/iomem", "r");
@@ -58,6 +60,11 @@ static unsigned long scanout_base(void) {
 }
 
 static void scanout_close(void) {
+  if (clcd != MAP_FAILED) {
+    clcd[0x50 / 4] = clcd[0x50 / 4] | 1;
+    munmap((void *)clcd, 4096);
+    clcd = MAP_FAILED;
+  }
   if (scanout != MAP_FAILED)
     munmap(scanout, 640 * 960 * 4);
   scanout = MAP_FAILED;
@@ -84,6 +91,50 @@ static uint8_t *scanout_open(void) {
     return NULL;
   }
   return shadow;
+}
+
+/*
+ * The CLCD controller keeps reading the framebuffer 60 times a second while
+ * the screen is blanked and the backlight is off. Bit 0 of CLCD + 0x50
+ * enables it; bit 1 reads back once it has stopped (openiBoot
+ * plat-a4/clcd.c, lcd_fill_switch). Stopping it while blanked cut the
+ * phone's draw by about 30-50 mA on 23 October 2026. The DSI link and the
+ * panel stay configured, so scanout resumes with the next frame. N90 only,
+ * through the same /dev/mem descriptor as the direct copy.
+ */
+static int is_n90(void) {
+  char model[32] = "";
+  FILE *f = fopen("/proc/device-tree/model", "r");
+  if (f) {
+    if (!fgets(model, sizeof model, f))
+      model[0] = 0;
+    fclose(f);
+  }
+  return !strcmp(model, "Apple iPhone 4");
+}
+
+int soy_display_scanout(int on) {
+  if (memfd < 0)
+    return -1;
+  if (clcd == MAP_FAILED) {
+    if (!is_n90())
+      return -1;
+    clcd = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, memfd,
+                (off_t)CLCD_REGS);
+    if (clcd == MAP_FAILED)
+      return -1;
+  }
+  volatile uint32_t *control = clcd + 0x50 / 4;
+  if (on) {
+    *control = *control | 1;
+    return 0;
+  }
+  if (!(*control & 1))
+    return 0;
+  *control = *control & ~1u;
+  for (int i = 0; i < 50 && !(*control & 2); i++)
+    usleep(1000);
+  return 0;
 }
 
 static void copy_row(uint8_t *d, const uint8_t *s, size_t n) {
@@ -195,6 +246,8 @@ uint32_t *soy_display_open(void) {
   uint8_t *direct = scanout_open();
   if (direct)
     memcpy(direct, mapped, 640 * 960 * 4);
+  /* A renderer killed while blanked left the controller stopped. */
+  soy_display_scanout(1);
   if (soy_display_present(0, 0, 640, 960))
     goto fail;
   return direct ? (uint32_t *)direct : mapped;
@@ -238,4 +291,9 @@ int soy_display_present(int x1, int y1, int x2, int y2) {
   return -1;
 }
 void soy_display_close(void) {}
+int soy_display_scanout(int on) {
+  (void)on;
+  errno = ENOTSUP;
+  return -1;
+}
 #endif
