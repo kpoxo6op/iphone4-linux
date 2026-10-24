@@ -1335,7 +1335,10 @@ static void sleep_display(const char *why) {
   lv_refr_now(display);
   lv_timer_pause(lv_display_get_refr_timer(display));
   set_backlight(0);
-  scanout_stopped = !headless && !soy_display_scanout(0);
+  /* Scanout keeps running while blanked. Stopping it (23 October) left the
+   * panel in video mode with no frames, and the blanked screen showed grey
+   * and flickered (24 October); the panel would have to be put to sleep
+   * first, which Soy does not do. */
   mark_blanked(1);
 }
 static int set_idle_timeout(const char *s) {

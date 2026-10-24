@@ -241,8 +241,9 @@ With these, the screen blanked, on the laptop's USB:
 | TV-out and camera supplies (LDOs 2 and 10) off | 177 against 178 mA at a fixed limit |
 | Scanout and the DSI high-speed clock off | 175 mA, not clearly below scanout alone |
 
-The scanout result is now in Soy: it stops the CLCD while blanked
-([idle display](../../docs/soy/idle-display.md#display-scanout)). Neither
+Soy stopped the CLCD while blanked from 23 October and stopped doing so on
+24 October: with the panel left in video mode and no frames, the dark screen
+went grey and flickered ([idle display](../../docs/soy/idle-display.md#display-scanout)). Neither
 the LDOs nor touch power are worth switching. The absolute numbers carry the
 meter's uncertainty: the input limit's real current and the `ich` scale are
 inferred, not calibrated against an instrument. They also do not settle the

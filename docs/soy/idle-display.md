@@ -82,9 +82,16 @@ been measured yet; the journal's five-minute battery samples will give it.
 
 ### Display scanout
 
-With the backlight off, the display controller still read the whole
-framebuffer 60 times a second and sent it to the panel. Since 23 October Soy
-stops it when it blanks: bit 0 of the CLCD's register at `0x89200050` enables
+**Reverted on 24 October.** With scanout stopped, Boris found the blanked
+screen grey and flickering where it had been black: the panel stayed on in
+video mode with no frames arriving. Soy now leaves scanout running while
+blanked, as before 23 October, and gives up the 30-50 mA. Doing it properly
+would mean putting the panel to sleep (display off, sleep in) before
+stopping the video, and waking it again before scanout resumes.
+
+What was built, for the record: with the backlight off, the display controller still read the whole
+framebuffer 60 times a second and sent it to the panel. On 23 October Soy
+began stopping it when it blanked: bit 0 of the CLCD's register at `0x89200050` enables
 scanout and bit 1 reads back once it has stopped (openiBoot
 `plat-a4/clcd.c`, `lcd_fill_switch`). On wake Soy sets bit 0 again, draws the
 scene and waits 34 ms, two frames, before lighting the backlight. Opening the
