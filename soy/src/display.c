@@ -94,13 +94,14 @@ static uint8_t *scanout_open(void) {
 }
 
 /*
- * The CLCD controller keeps reading the framebuffer 60 times a second while
- * the screen is blanked and the backlight is off. Bit 0 of CLCD + 0x50
- * enables it; bit 1 reads back once it has stopped (openiBoot
- * plat-a4/clcd.c, lcd_fill_switch). Stopping it while blanked cut the
- * phone's draw by about 30-50 mA on 23 October 2026. The DSI link and the
- * panel stay configured, so scanout resumes with the next frame. N90 only,
- * through the same /dev/mem descriptor as the direct copy.
+ * The CLCD controller's scanout: bit 0 of CLCD + 0x50 enables it; bit 1
+ * reads back once it has stopped (openiBoot plat-a4/clcd.c,
+ * lcd_fill_switch). Stopping it while blanked cut the phone's draw by about
+ * 30-50 mA on 23 October 2026, but with the panel still in video mode and
+ * no frames arriving the blanked screen turned grey and flickered, so Soy no
+ * longer stops it (touch.c, sleep_display). Opening the display still makes
+ * sure it runs, in case a renderer stopped it. N90 only, through the same
+ * /dev/mem descriptor as the direct copy.
  */
 static int is_n90(void) {
   char model[32] = "";
