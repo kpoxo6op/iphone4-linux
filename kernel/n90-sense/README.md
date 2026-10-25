@@ -116,3 +116,6 @@ vectors. Actual self-test, power and frame results belong in the private operato
 report and must be labelled real hardware.
 
 For a cached private trip profile, `soy/tools/trip.py --request 'Town today 9:30, back by 13:00' --config PROFILE --osm EXTRACT --gtfs FEED --out PRIVATE --sense --put --operator OPERATOR` computes and installs both scenes and sense inputs. A native WMM caller is built alongside the phone binaries. The operator must already have the sensor binaries and exact-kernel adapter built; the first build/source download and independent release checks are separate from cached pack timing. Destination names must resolve uniquely in the private profile. Changed appointments discard old curated walking notes and require fresh checks. This is a bounded compiler, not unrestricted natural-language geocoding.
+The mode-transition boundary also requires that changing walk/bus mode preserves
+the anchor's source. A transport choice must not relabel where a fix came from;
+the unknown/stale checks alone do not exercise that transition.
