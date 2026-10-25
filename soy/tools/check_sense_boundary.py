@@ -37,6 +37,8 @@ try:
  wait(lambda:(run/'control').exists() and sense()['position'] is None);unknown=capture('unknown');checks['no_position_from_planned_graph_origin']=True
  cmd(sense_run,'fix missing');cmd(sense_run,'x'*200+'fix start');time.sleep(1.1);assert sense()['position'] is None;checks['invalid_and_overlong_fix_rejected']=True
  cmd(sense_run,'fix start');wait(lambda:sense()['position'] is not None);assert sense()['heading_deg'] is None
+ cmd(sense_run,'mode bus');wait(lambda:sense().get('mode')=='bus');assert sense()['source']=='given landmark'
+ cmd(sense_run,'mode walk');wait(lambda:sense().get('mode')=='walk');assert sense()['source']=='given landmark';checks['mode_changes_preserve_fix_source']=True
  time.sleep(1.1);given=capture('given');assert given!=unknown;checks['binding_updates_existing_scene']=True
  cmd(run,'scroll 900');wait(lambda:status()['scroll']==900)
  cmd(sense_run,'fix finish');wait(lambda:sense()['position']['lat']>.008);time.sleep(1.1);assert status()['scroll']==900;checks['live_update_preserves_reading_position']=True

@@ -83,7 +83,7 @@ static void command(char *line)
  else if(!strcmp(line,"target bus"))target_override=1;
  else if(!strcmp(line,"cancel")){cal_until=0;record("\"e\":\"sense_calibration_cancel\"");}
  else if(!strcmp(line,"mode walk")){walking=1;record("\"e\":\"sense_mode\",\"mode\":\"walk\"");}
- else if(!strcmp(line,"mode bus")){walking=0;snprintf(source,sizeof source,"last given fix; on bus");record("\"e\":\"sense_mode\",\"mode\":\"bus\"");}
+ else if(!strcmp(line,"mode bus")){walking=0;record("\"e\":\"sense_mode\",\"mode\":\"bus\"");}
  else if(!strncmp(line,"fix ",4)&&safe_id(line+4))for(int i=0;i<npoints;i++)if(!strcmp(line+4,points[i].id)){walking=1;given_fix(&points[i],"given landmark");break;}
 }
 static void normalize_name(const char *in,char *out,size_t n)
@@ -155,7 +155,7 @@ static void status(void)
   snprintf(position_json,sizeof position_json,"{\"lat\":%.7f,\"lon\":%.7f,\"source\":\"%s\",\"fix_age_s\":%.1f,\"estimate_age_s\":%.1f,\"accuracy_m\":%.1f}",lat,lon,source,age,now-position_time,position.uncertainty+fmax(0,now-position_time)*1.5);
   record("\"e\":\"sense_position\",\"lat\":%.7f,\"lon\":%.7f,\"source\":\"%s\",\"fix_age_s\":%.1f,\"accuracy_m\":%.1f,\"steps\":%d",lat,lon,source,age,position.uncertainty,steps);
  }else publish("position","Unavailable · choose I'm here");
- publish("state.json","{\"schema\":1,\"time\":%.3f,\"position\":%s,\"source\":\"%s\",\"heading_deg\":%s,\"heading_age_s\":%s,\"heading_source\":\"AK8975 + LIS331 + WMM2025\",\"heading_accuracy_deg\":null,\"steps\":%d,\"journal_recording\":%s}",now,position_json,position.valid?source:"unavailable",heading_json,heading_age,steps,journal?"true":"false");
+ publish("state.json","{\"schema\":1,\"time\":%.3f,\"position\":%s,\"source\":\"%s\",\"mode\":\"%s\",\"heading_deg\":%s,\"heading_age_s\":%s,\"heading_source\":\"AK8975 + LIS331 + WMM2025\",\"heading_accuracy_deg\":null,\"steps\":%d,\"journal_recording\":%s}",now,position_json,position.valid?source:"unavailable",walking?"walk":"bus",heading_json,heading_age,steps,journal?"true":"false");
  if(good_heading)record("\"e\":\"sense_heading\",\"heading_deg\":%.3f,\"mag_uT\":[%.3f,%.3f,%.3f],\"accel_g\":[%.4f,%.4f,%.4f]",heading,mag[0],mag[1],mag[2],acc[0],acc[1],acc[2]);
  publish("updated","%.3f",now);
 }
