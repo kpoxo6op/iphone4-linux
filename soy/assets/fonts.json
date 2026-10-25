@@ -1,7 +1,7 @@
 {
   "source": "https://dejavu-fonts.github.io/",
   "font_sha256": "54bf827eb99404e8f430c330ad30f063334f637eba0109b6a18d4f566a8e9dd8",
-  "generator": "Pillow FreeType rasterization, fixed baseline, alpha masks",
+  "generator": "Pillow FreeType rasterization, fixed baseline, alpha masks; box drawing stretched and block elements drawn to fill the cell",
   "fonts": {
     "24": {
       "cell": [
@@ -9,7 +9,7 @@
         33
       ],
       "glyphs": 624,
-      "sha256": "730dce43de1e8f87fb87a323244f62df443ed42b39f3c401a810f9abd3ac9489"
+      "sha256": "2a63a1326f3a1a8fc3ad88790db77bba89835312093325c5d9a63bbacf4d76a2"
     },
     "32": {
       "cell": [
@@ -17,7 +17,7 @@
         42
       ],
       "glyphs": 624,
-      "sha256": "7eda22475022628a3f23909ef83dd73eb43c14b47756b1bacbe689e1005fc2a3"
+      "sha256": "e61f9b4b06972ec1f433e8e188ef0bb3e6a0c38075bb3c0ba9a2654257496f6c"
     },
     "36": {
       "cell": [
@@ -25,7 +25,7 @@
         47
       ],
       "glyphs": 624,
-      "sha256": "b24ad9a625ffeca154fd17dc6cc1aaa7169a2ba527c497553098232fe189fe5a"
+      "sha256": "716014daa85da0f3a12939f4fef5e354af8785d569fc2978423823a1009d5358"
     },
     "42": {
       "cell": [
@@ -33,7 +33,7 @@
         53
       ],
       "glyphs": 624,
-      "sha256": "88e0c252004defd1a35c0aa1438649af2e982977d7ecf0babd8c8fa6b522e1d8"
+      "sha256": "ea8093eb503d4c60d2ff79798120d400d3e41447285fa1c69193b7fd5b18c2db"
     },
     "48": {
       "cell": [
@@ -41,7 +41,7 @@
         61
       ],
       "glyphs": 624,
-      "sha256": "24ff03f3fefe36d9880a7c1ced3133109b06becbc48d317a24dc9ac9abc1a7fe"
+      "sha256": "eca6e7b0cebd1db3ee2baa36e23bad0d19d1c39aef8aa441e1145e9d0afad12d"
     },
     "54": {
       "cell": [
@@ -49,7 +49,7 @@
         68
       ],
       "glyphs": 624,
-      "sha256": "c8b12be1004ea198cfe94fa94ebe04cfacbc4c3013b5ed236a5385601230958f"
+      "sha256": "1d652a5bf5c6cbab37a2db658cb4f369373ab9186cead96d8bc48d4128bd78f8"
     },
     "96": {
       "cell": [

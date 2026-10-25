@@ -72,6 +72,19 @@ The type is DejaVu Sans Mono with Latin, Latin-1, Cyrillic, dashes, quotes,
 and `✓`, shows as `?`. People pinch to change the text size; the layout
 follows.
 
+## Maps
+
+Box drawing and block elements fill the whole character cell, the way
+terminals draw them, so tiles in neighbouring rows and columns join without
+seams. A map is therefore plain scene text: `soy/tools/ascii_map.py` draws one
+from OpenStreetMap data cut by `soy/tools/osm_extract.py`. Water is quadrant
+blocks in the scene accent, roads are box-drawing lines (double for motorways,
+heavy for main roads, light for streets), places are bold capitals, state
+highway numbers sit on their motorways and pins are solid blocks. A row is 26
+cells at the default text size; 14 rows and the scale line fit one screen,
+and taller maps scroll. Keep personal places such as home out of Git: pass
+them as `--pin` and put the scene in the private library.
+
 ## Live values
 
 `{{key}}` inserts a device reading that refreshes every second:
