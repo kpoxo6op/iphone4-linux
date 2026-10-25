@@ -1195,6 +1195,7 @@ static void invalidate_sheet_picture(lv_event_t *e) {
   if (sheet_picture) {
     lv_obj_delete(sheet_picture);
     sheet_picture = NULL;
+    sheet_restore_at = 0;
     lv_obj_set_style_opa(sheet_card, LV_OPA_COVER, 0);
   }
 }
