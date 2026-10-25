@@ -101,6 +101,7 @@ static int fb = -1, ctl = -1, headless, sheet_kind, sheet_height,
            sheet_initializing;
 static int ttyfd = -1, tty_mode = -1;
 static int sense_sheet_pending;
+static double sheet_restore_at;
 static char checkpoint_ids[32][40], checkpoint_labels[32][80];
 static int checkpoint_count;
 static lv_obj_t *sense_sheet_status;
@@ -1088,9 +1089,15 @@ static void sheet_event(lv_event_t *e) {
   pace_scroll(e);
   if (sheet_picture &&
       (c == LV_EVENT_SCROLL_BEGIN || c == LV_EVENT_SCROLL_END)) {
-    int moving = c == LV_EVENT_SCROLL_BEGIN;
-    lv_obj_set_style_opa(sheet_card, moving ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
-    lv_obj_set_hidden(sheet_picture, !moving);
+    if (c == LV_EVENT_SCROLL_BEGIN) {
+      sheet_restore_at = 0;
+      lv_obj_set_style_opa(sheet_card, LV_OPA_TRANSP, 0);
+      lv_obj_set_hidden(sheet_picture, false);
+    } else {
+      /* The last moving frame uses the identical cached pixels. Restore
+       * interactive text only after motion has ended, not in that frame. */
+      sheet_restore_at = now() + .05;
+    }
   }
   if (c == LV_EVENT_SCROLL_END && sheet_open_amount() < 4 && !contacts_active)
     close_pending = 1;
@@ -1117,12 +1124,17 @@ static void read_checkpoints(void) {
   fclose(f);
 }
 static void update_sense_sheet(void) {
-  if (!sheet || !sense_sheet_status || (sheet_kind != 4 && sheet_kind != 5)) return;
+  if (!sheet || !sense_sheet_status || (sheet_kind < 4 || sheet_kind > 6)) return;
   char a[128], b[128], c[128], mode[64], text[480];
   if (sheet_kind == 5) {
     binding("sense.heading", a, sizeof a);
     binding("sense.calibration", b, sizeof b);
     snprintf(text, sizeof text, "%s\n\n%s", a, b);
+  } else if (sheet_kind == 6) {
+    binding("sense.heading", a, sizeof a);
+    binding("sense.shadow", b, sizeof b);
+    binding("sense.bearing_check", c, sizeof c);
+    snprintf(text, sizeof text, "%s\n%s\n%s", a, b, c);
   } else {
     binding("sense.position_source", a, sizeof a);
     binding("sense.position_age", b, sizeof b);
@@ -1139,18 +1151,19 @@ static void update_sense_sheet(void) {
 static void button_event(lv_event_t *e) {
   if (multi_latched)
     return;
-  under_valid = 0; /* every action changes the scene under the sheet */
   intptr_t action = (intptr_t)lv_event_get_user_data(e);
+  if (action >= -3) under_valid = 0; /* scene, text size or reading position */
   tap_events++;
   if (action <= -100 && -action - 100 < checkpoint_count) {
     char command[64]; snprintf(command, sizeof command, "fix %s", checkpoint_ids[-action - 100]);
     if (!sense_command(command)) close_pending = 1;
-  } else if (action == -4 || action == -5) {
-    sense_sheet_pending = action == -4 ? 4 : 5; close_pending = 1;
+  } else if (action == -4 || action == -5 || action == -10) {
+    sense_sheet_pending = action == -4 ? 4 : action == -5 ? 5 : 6; close_pending = 1;
   } else if (action == -6) sense_command("calibrate");
   else if (action == -7) sense_command("mode walk");
   else if (action == -8) sense_command("mode bus");
   else if (action == -9) sense_command("cancel");
+  else if (action == -11) sense_command("shadow");
   else if (action >= 0) {
     go((int)action, 0);
     close_pending = 1;
@@ -1205,6 +1218,7 @@ static void open_sheet(int kind, int from_edge) {
                  : kind == 2 ? clamp(100 + count * 100, 300, 800)
                              : 420;
   sheet_initializing = 1;
+  sheet_restore_at = 0;
   close_pending = 0;
   /* A modal freezes its underlay. An opaque object also lets LVGL cull the
    * covered page tree; a transparent image alone does not establish cover. */
@@ -1213,8 +1227,8 @@ static void open_sheet(int kind, int from_edge) {
     {
       if (under) {
         memcpy(under, pixels, PIXEL_BYTES);
-        /* Live values keep changing under the sheet. */
-        under_valid = !views[current].live_count;
+        /* Binding refresh is suspended while the modal is open. */
+        under_valid = 1;
       }
       memcpy(buf->data, pixels, PIXEL_BYTES);
       /* One fixed dimmed backdrop, rather than blending the whole display
@@ -1275,7 +1289,8 @@ static void open_sheet(int kind, int from_edge) {
         kind == 1   ? "Device"
         : kind == 2 ? "Scenes"
         : kind == 4 ? "I’m here"
-        : kind == 5 ? "Compass" : "Text",
+        : kind == 5 ? "Compass"
+        : kind == 6 ? "Shadow check" : "Text",
         2, INK, 34, 24, 572);
   if (kind == 1) {
     char txt[256], value[128];
@@ -1312,10 +1327,14 @@ static void open_sheet(int kind, int from_edge) {
         snprintf(title, sizeof title, "%.*s", (int)bytes, name);
         button(list, title, 14, i * 100, 612, -100 - i);
       }
+    } else if (kind == 5) {
+      label(sheet_card, "Calibrate away from metal: move the phone in a figure eight for 40 seconds.", 1, INK, 34, 350, 572);
+      button(sheet_card, "Calibrate", 34, 540, 270, -6);
+      button(sheet_card, "Cancel", 336, 540, 270, -9);
+      button(sheet_card, "Check shadow", 34, 650, 572, -10);
     } else {
-      label(sheet_card, "Away from the charger and metal, turn the phone through a figure eight for 40 seconds. Then compare a known direction.", 1, INK, 34, 330, 572);
-      button(sheet_card, "Calibrate", 34, 650, 270, -6);
-      button(sheet_card, "Cancel", 336, 650, 270, -9);
+      label(sheet_card, "Keep level. Point the phone’s top along a vertical object’s shadow, away from its base.", 1, INK, 34, 400, 572);
+      button(sheet_card, "Aligned · record", 34, 650, 572, -11);
     }
     update_sense_sheet();
   } else if (kind == 2) {
@@ -1393,6 +1412,7 @@ static void close_sheet(void) {
   sheet_card = NULL;
   sheet_picture = NULL;
   sheet_kind = 0;
+  sheet_restore_at = 0;
   close_pending = 0;
 }
 static void cancel_motion(void) {
@@ -1728,6 +1748,9 @@ static void read_pointer(lv_indev_t *indev, lv_indev_data_t *data) {
             pointer_point = f.touches[i].point;
             break;
           }
+        if (sheet && sheet_kind != 1 && pointer_point.y >= H - sheet_height &&
+            pointer_point.y < H - sheet_height + 60)
+          lv_indev_set_scroll_limit(pointer, 1);
         if (!sheet && pointer_point.y < 40)
           open_sheet(1, 1);
         else if (!sheet && pointer_point.y >= H - 40)
@@ -2268,6 +2291,11 @@ int main(int argc, char **argv) {
     if (t >= nextstats &&
         (contacts_active || lv_anim_count_running() || lv_obj_is_scrolling(pager)))
       nextstats = t + .2;
+    if (sheet && sheet_picture && sheet_restore_at && !moving && t >= sheet_restore_at) {
+      sheet_restore_at = 0;
+      lv_obj_set_style_opa(sheet_card, LV_OPA_COVER, 0);
+      lv_obj_set_hidden(sheet_picture, true);
+    }
     if (t >= nextstats) {
       double began = now();
       switch (stat_phase) {
@@ -2310,7 +2338,7 @@ int main(int argc, char **argv) {
              quoted(battery_state, state, sizeof state), battery_mv, battery);
         battery_noted = t;
       }
-      if (!moving && sheet && stat_phase == 3) update_sense_sheet();
+      if (!moving && sheet && !sheet_restore_at && stat_phase == 3) update_sense_sheet();
       stats_end = now();
       stats_ms = (stats_end - began) * 1000;
       stat_phase = (stat_phase + 1) % 5;
@@ -2358,7 +2386,7 @@ int main(int argc, char **argv) {
         lv_refr_now(display);
       /* The input just read may have closed a sheet (a release at the closed
        * end). Close it in this pass, not after the next poll. */
-      if (close_pending) {
+      if (close_pending && !sense_sheet_pending) {
         close_sheet();
         lv_refr_now(display);
       }

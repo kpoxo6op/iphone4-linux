@@ -42,7 +42,9 @@ def journey_text(journey,stops,notes=None):
             a=stops[leg['from']]; b=stops[leg['to']]
             lines.append(f"## {leg['route']} at {clock(leg['depart'])}")
             lines.append(f"{a['stop_name']} · {a['stop_code']}")
-            lines.append('Towards '+(leg['headsign'] or b['stop_name'])+'.')
+            headsign=leg['headsign'] or b['stop_name']
+            destination=headsign.split(' To ',1)[-1]
+            lines.append('Towards '+destination+'.')
             lines.append(f"Get off {clock(leg['arrive'])}: {b['stop_name']} · {b['stop_code']}.")
             if len(leg.get('stops',[]))>2:
                 prior=stops[leg['stops'][-2]]; lines.append('The stop before is '+prior['stop_name']+'.')

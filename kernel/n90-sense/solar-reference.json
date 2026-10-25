@@ -1,0 +1,92 @@
+{
+  "source": "https://gml.noaa.gov/grad/solcalc/azel.html",
+  "source_sha256": "fad654ecec69363ca4c4fa84d0923cd7fe4724c6bdb99031a28f03a53dab6bb2",
+  "observed": "2026-10-26 NZDT",
+  "method": "NOAA's live calcSun form, UTC, east-positive inputs converted to its west-positive longitude convention. Display values are truncated to 0.01 degree.",
+  "cases": [
+    {
+      "utc": "2003-10-17T19:30:30Z",
+      "lat": 39.742476,
+      "lon": -105.1786,
+      "azimuth": "194.34",
+      "elevation_refracted": "39.89"
+    },
+    {
+      "utc": "2026-06-21T00:00:00Z",
+      "lat": -41.2865,
+      "lon": 174.7762,
+      "azimuth": "5.72",
+      "elevation_refracted": "25.09"
+    },
+    {
+      "utc": "2026-06-21T03:00:00Z",
+      "lat": -41.2865,
+      "lon": 174.7762,
+      "azimuth": "322.82",
+      "elevation_refracted": "15.76"
+    },
+    {
+      "utc": "2026-12-21T00:00:00Z",
+      "lat": -41.2865,
+      "lon": 174.7762,
+      "azimuth": "13.81",
+      "elevation_refracted": "71.72"
+    },
+    {
+      "utc": "2026-12-21T04:00:00Z",
+      "lat": -41.2865,
+      "lon": 174.7762,
+      "azimuth": "273.47",
+      "elevation_refracted": "40.93"
+    },
+    {
+      "utc": "2026-12-20T20:00:00Z",
+      "lat": -41.2865,
+      "lon": 174.7762,
+      "azimuth": "92.74",
+      "elevation_refracted": "33.9"
+    },
+    {
+      "utc": "2025-03-20T10:00:00Z",
+      "lat": 51.5074,
+      "lon": -0.1278,
+      "azimuth": "141.41",
+      "elevation_refracted": "31.91"
+    },
+    {
+      "utc": "2025-03-20T14:00:00Z",
+      "lat": 51.5074,
+      "lon": -0.1278,
+      "azimuth": "214.26",
+      "elevation_refracted": "33.42"
+    },
+    {
+      "utc": "2025-06-21T04:00:00Z",
+      "lat": 35.6762,
+      "lon": 139.6503,
+      "azimuth": "238.87",
+      "elevation_refracted": "69.36"
+    },
+    {
+      "utc": "2025-12-21T04:00:00Z",
+      "lat": 35.6762,
+      "lon": 139.6503,
+      "azimuth": "200.94",
+      "elevation_refracted": "27.91"
+    },
+    {
+      "utc": "2025-03-20T01:00:00Z",
+      "lat": 0,
+      "lon": 179.9,
+      "azimuth": "269.42",
+      "elevation_refracted": "76.97"
+    },
+    {
+      "utc": "2025-03-20T23:00:00Z",
+      "lat": 0,
+      "lon": -179.9,
+      "azimuth": "89.18",
+      "elevation_refracted": "73.29"
+    }
+  ]
+}

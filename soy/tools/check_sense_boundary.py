@@ -37,6 +37,7 @@ try:
  wait(lambda:(run/'control').exists() and sense()['position'] is None);unknown=capture('unknown');checks['no_position_from_planned_graph_origin']=True
  cmd(sense_run,'fix missing');cmd(sense_run,'x'*200+'fix start');time.sleep(1.1);assert sense()['position'] is None;checks['invalid_and_overlong_fix_rejected']=True
  cmd(sense_run,'fix start');wait(lambda:sense()['position'] is not None);assert sense()['heading_deg'] is None
+ cmd(sense_run,'shadow');time.sleep(.2);events=[json.loads(x) for x in (sense_run/'journal.jsonl').read_text().splitlines()];assert any(e['e']=='sense_bearing_rejected' for e in events);assert not any(e['e']=='sense_bearing_reference' for e in events);checks['unavailable_heading_cannot_be_recorded_as_reference']=True
  cmd(sense_run,'mode bus');wait(lambda:sense().get('mode')=='bus');assert sense()['source']=='given landmark'
  cmd(sense_run,'mode walk');wait(lambda:sense().get('mode')=='walk');assert sense()['source']=='given landmark';checks['mode_changes_preserve_fix_source']=True
  time.sleep(1.1);given=capture('given');assert given!=unknown;checks['binding_updates_existing_scene']=True
