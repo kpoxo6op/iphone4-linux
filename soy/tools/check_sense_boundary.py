@@ -41,7 +41,8 @@ try:
  cmd(run,'scroll 900');wait(lambda:status()['scroll']==900)
  cmd(sense_run,'fix finish');wait(lambda:sense()['position']['lat']>.008);time.sleep(1.1);assert status()['scroll']==900;checks['live_update_preserves_reading_position']=True
  fixes=[json.loads(x) for x in (sense_run/'journal.jsonl').read_text().splitlines() if json.loads(x)['e']=='sense_fix'];assert fixes[0]['predicted_lat'] is None and fixes[1]['predicted_lat']==0;checks['fix_logs_prediction_before_reset']=True
- service.terminate();service.wait(timeout=5);cmd(run,'scroll -9600');wait(lambda:status()['scroll']==0);time.sleep(1.2);stale=capture('stopped');assert stale!=given;checks['stopped_service_does_not_leave_live_position']=True
+ # A crash cannot clear `updated`; its last position must expire by age.
+ service.kill();service.wait(timeout=5);cmd(run,'scroll -9600');wait(lambda:status()['scroll']==0);time.sleep(6.2);stale=capture('stopped');assert stale!=given;checks['crashed_service_position_expires']=True
  sys.path.insert(0,str(root/'soy/tools'));import scene
  class Local:
   def run(self,command):return subprocess.check_output(['sh','-c',command])

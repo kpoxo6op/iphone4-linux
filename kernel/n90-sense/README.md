@@ -103,7 +103,7 @@ separate producer cursors and appends both journals to the existing private
 daily files. `score_sense.py --since` selects the actual field trial and scores
 pre-reset predictions; prior fixes may anchor the estimate. Heading accuracy
 requires independent bearing-reference events. Missing references stay missing.
-A one-kilometre walk and screen-off energy increment still require field/device
+Pass/fail scoring requires `--walk-metres` from independently established workload evidence; detected steps cannot supply their own ground truth. Heading pass requires every supplied reference error within five degrees. A one-kilometre walk and screen-off energy increment still require field/device
 evidence; mathematical fixtures cannot pass them.
 
 Native checks use the real FIFO/files and isolated `/run`:

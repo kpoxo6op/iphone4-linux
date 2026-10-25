@@ -8,7 +8,7 @@ residuals are not heading truth. No GPS or synthetic examples count as field.
 """
 import argparse,datetime,json,math,statistics
 from pathlib import Path
-p=argparse.ArgumentParser();p.add_argument('journal',type=Path);p.add_argument('--since',required=True,help='ISO timestamp with timezone delimiting the actual field trial');p.add_argument('--out',type=Path,required=True);a=p.parse_args()
+p=argparse.ArgumentParser();p.add_argument('journal',type=Path);p.add_argument('--since',required=True,help='ISO timestamp with timezone delimiting the actual field trial');p.add_argument('--walk-metres',type=float,help='Independently established walking workload, not inferred from detected steps');p.add_argument('--out',type=Path,required=True);a=p.parse_args()
 start=datetime.datetime.fromisoformat(a.since)
 if start.tzinfo is None:p.error('--since requires a timezone')
 events=[json.loads(l) for l in a.journal.read_text().splitlines() if l.strip()];events=[e for e in events if e.get('t',0)>=start.timestamp()]
@@ -22,5 +22,6 @@ for e in events:
   headings.append(abs((e['heading_deg']-e['reference_deg']+180)%360-180))
 median=statistics.median([e['error_m'] for e in fixes]) if fixes else None
 heading=statistics.median(headings) if headings else None
-result={'scope':'Given checkpoints, with current fix withheld; prior fixes may anchor estimates','checkpoint_samples':len(fixes),'median_position_error_m':median,'heading_reference_samples':len(headings),'median_heading_error_deg':heading,'position_target_m':50,'heading_target_deg':5,'position_pass':None if median is None else median<50,'heading_pass':None if heading is None else heading<=5,'status':'field_evidence_missing' if not fixes or not headings else 'scored','checkpoint_errors':fixes,'limits':['Given landmarks carry their own placement error.','No heading reference means no heading-accuracy result.','A 1 km field walk must be established separately; a short run cannot pass that workload.']}
+workload=a.walk_metres is not None and a.walk_metres>=1000
+result={'scope':'Given checkpoints, with current fix withheld; prior fixes may anchor estimates','checkpoint_samples':len(fixes),'median_position_error_m':median,'heading_reference_samples':len(headings),'median_heading_error_deg':heading,'worst_heading_error_deg':max(headings) if headings else None,'position_target_m':50,'heading_target_deg':5,'independent_walk_metres':a.walk_metres,'workload_pass':workload,'position_pass':None if median is None or not workload else median<50,'heading_pass':None if heading is None else max(headings)<=5,'status':'field_evidence_missing' if not fixes or not headings or not workload else 'scored','checkpoint_errors':fixes,'limits':['Given landmarks carry their own placement error.','No heading reference means no heading-accuracy result.','A 1 km field walk must be established separately; a short run cannot pass that workload.']}
 a.out.parent.mkdir(parents=True,exist_ok=True);a.out.write_text(json.dumps(result,indent=2)+'\n');print(json.dumps({k:v for k,v in result.items() if k not in ('checkpoint_errors','limits')}))
