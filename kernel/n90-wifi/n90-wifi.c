@@ -34,6 +34,7 @@
 #include <sys/socket.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/time.h>
 
 #define BUF 16384
 #define DATA(a) ((void *)((char *)(a) + NLA_HDRLEN))
@@ -264,6 +265,7 @@ static int features(int fd, int ifindex)
 struct bss {
 	char ssid[33], bssid[18], sec[12];
 	int freq, mbm, status;
+	int age_ms;
 };
 
 struct bss_list {
@@ -294,6 +296,7 @@ static void bss_cb(struct genlmsghdr *g, int len, void *arg)
 		b->freq = *(uint32_t *)DATA(bb[NL80211_BSS_FREQUENCY]);
 	if (bb[NL80211_BSS_SIGNAL_MBM])
 		b->mbm = *(int32_t *)DATA(bb[NL80211_BSS_SIGNAL_MBM]);
+	b->age_ms = bb[NL80211_BSS_SEEN_MS_AGO] ? (int)*(uint32_t *)DATA(bb[NL80211_BSS_SEEN_MS_AGO]) : -1;
 	b->status = bb[NL80211_BSS_STATUS] ? (int)*(uint32_t *)DATA(bb[NL80211_BSS_STATUS]) : -1;
 	if (!bb[NL80211_BSS_INFORMATION_ELEMENTS])
 		return;
@@ -306,7 +309,7 @@ static void bss_cb(struct genlmsghdr *g, int len, void *arg)
 			memcpy(b->ssid, ie + 2, ie[1]);
 			b->ssid[ie[1]] = 0;
 			for (i = 0; i < ie[1]; i++)
-				if (b->ssid[i] < 32 || b->ssid[i] == 127)
+				if ((unsigned char)b->ssid[i] < 32 || b->ssid[i] == 127)
 					b->ssid[i] = '?';
 		} else if (ie[0] == 48) {
 			rsn = 1;
@@ -375,6 +378,19 @@ static int scan(int fd, int ifindex)
 		printf("%4d dBm %4d MHz %-5s %s %s\n", l.b[i].mbm / 100, l.b[i].freq,
 		       l.b[i].sec, l.b[i].bssid, l.b[i].ssid[0] ? l.b[i].ssid : "(hidden)");
 	return 0;
+}
+
+/* Read cached observations without requesting a scan or joining anything.
+ * Tabs/newlines in SSIDs were already sanitized by bss_cb. */
+static int sightings(int fd, int ifindex)
+{
+ static struct bss_list l;
+ if (dump_bss(fd, ifindex, &l)) return 1;
+ for (int i = 0; i < l.n; i++)
+  printf("%s\t%d\t%d\t%d\t%d\t%s\n", l.b[i].bssid, l.b[i].freq,
+         l.b[i].mbm / 100, l.b[i].age_ms,
+         l.b[i].status == NL80211_BSS_STATUS_ASSOCIATED, l.b[i].ssid);
+ return 0;
 }
 
 static int link_status(int fd, int ifindex)
@@ -569,11 +585,17 @@ int main(int argc, char **argv)
 		return 1;
 	}
 	fd = open_nl();
+	if (!strcmp(cmd, "sightings")) {
+		struct timeval timeout = { .tv_sec = 1 };
+		setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
+	}
 	resolve(fd);
 	if (!strcmp(cmd, "features"))
 		return features(fd, ifindex);
 	if (!strcmp(cmd, "scan"))
 		return scan(fd, ifindex);
+	if (!strcmp(cmd, "sightings"))
+		return sightings(fd, ifindex);
 	if (!strcmp(cmd, "link"))
 		return link_status(fd, ifindex);
 	if (!strcmp(cmd, "disconnect"))
@@ -592,7 +614,7 @@ int main(int argc, char **argv)
 	}
 	if (!strcmp(cmd, "join") && argc > 2)
 		return join(fd, ifindex, argv[2]);
-	fprintf(stderr, "usage: n90-wifi features|scan|link|disconnect [if] | "
+	fprintf(stderr, "usage: n90-wifi features|scan|sightings|link|disconnect [if] | "
 		"power [on|off] [if] | connect SSID [if] < pmk | join FILE [if]\n");
 	return 2;
 }

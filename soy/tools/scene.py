@@ -492,16 +492,16 @@ JOURNAL = PRIVATE / 'journal'
 VIEWPORT = 748  # Soy's reading area, BOTTOM - TOP
 
 
-def journal_pull(phone, directory):
-    """Append the phone's new journal lines to daily files; return how many."""
+def _journal_pull_one(phone, directory, remote="/run/soy/journal.jsonl", state_name="state.json"):
+    """Append one bounded producer; each has its own per-boot cursor."""
     directory.mkdir(mode=0o700, parents=True, exist_ok=True)
-    state_file = directory / 'state.json'
+    state_file = directory / state_name
     try:
         state = json.loads(state_file.read_text())
     except (OSError, ValueError):
         state = {}
     boot, size = phone.run('cat /proc/sys/kernel/random/boot_id; '
-                           'wc -c < /run/soy/journal.jsonl 2>/dev/null || echo 0'
+                           f'if [ -f {remote} ]; then wc -c < {remote}; else echo 0; fi'
                            ).decode().split()[:2]
     size = int(size)
     offset = state.get('offset', 0) if state.get('boot_id') == boot else 0
@@ -509,7 +509,7 @@ def journal_pull(phone, directory):
         offset = 0
     if size == offset:
         return 0
-    data = phone.run(f'tail -c +{offset + 1} /run/soy/journal.jsonl')
+    data = phone.run(f'tail -c +{offset + 1} {remote}')
     whole = data[:data.rfind(b'\n') + 1]  # a partial last line waits
     days = {}
     for line in whole.decode(errors='replace').splitlines():
@@ -525,6 +525,12 @@ def journal_pull(phone, directory):
             f.write(''.join(line + '\n' for line in lines))
     state_file.write_text(json.dumps({'boot_id': boot, 'offset': offset + len(whole)}) + '\n')
     return sum(len(lines) for lines in days.values())
+
+
+def journal_pull(phone, directory):
+    """Collect UI and sense evidence, including the offline trip after return."""
+    return (_journal_pull_one(phone, directory) +
+            _journal_pull_one(phone, directory, '/run/sense/journal.jsonl', 'sense-state.json'))
 
 
 def minutes(seconds):
