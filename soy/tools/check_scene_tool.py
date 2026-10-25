@@ -172,6 +172,21 @@ def inside(a):
         r = scene('sync')
         checks['reboot_opens_focus'] = (
             r.returncode == 0 and wait(lambda s: s['scene'] == 'note')['count'] == 6)
+        # A trip pack must replace the library atomically and undo as one edit.
+        # Single-file put/remove checks cannot catch partial bundle publication.
+        bundle = out / 'trip-pack'
+        bundle.mkdir()
+        (bundle / 'index').write_text('trip\n')
+        (bundle / 'trip.md').write_text('---\nid: trip\nlabel: Journey\n---\n# Route\n\nMeasured route.\n')
+        old_head = head()
+        (bundle / 'index').write_text('trip\nmissing\n')
+        r = scene('put', str(bundle), '--show')
+        checks['invalid_bundle_keeps_library'] = r.returncode == 1 and head() == old_head and status()['count'] == 6
+        (bundle / 'index').write_text('trip\n')
+        r = scene('put', str(bundle), '--show')
+        checks['bundle_replaces_library'] = r.returncode == 0 and wait(lambda s: s['scene'] == 'trip')['count'] == 1
+        r = scene('undo')
+        checks['bundle_undo_restores_all'] = r.returncode == 0 and wait(lambda s: s['count'] == 6) and 'trip' not in status()['scenes']
         control('quit')
         time.sleep(0.5)
     except Exception as exc:  # Record the failure with the evidence.
