@@ -40,8 +40,9 @@ static const int body_faces[] = {4, 1, 5, 2, 6};
 static const int body_sizes[] = {32, 36, 42, 48, 54};
 typedef struct {
   lv_obj_t *obj;
-  char *raw;
-  int font, graph;
+  char *raw, *expanded;
+  int font, graph, prefix, code, strong, block;
+  uint32_t ink;
 } Live;
 typedef struct {
   lv_obj_t *page, *body, **blocks, **text_blocks;
@@ -99,6 +100,10 @@ static int direct_display;
 static int fb = -1, ctl = -1, headless, sheet_kind, sheet_height,
            sheet_initializing;
 static int ttyfd = -1, tty_mode = -1;
+static int sense_sheet_pending;
+static char checkpoint_ids[32][40], checkpoint_labels[32][80];
+static int checkpoint_count;
+static lv_obj_t *sense_sheet_status;
 static int close_pending, rebuild_pending, zoom_pending = -1,
                                            zoom_anchor = H / 2;
 static int contacts_active, multi_latched, multi_canceled, primary = -1,
@@ -133,6 +138,7 @@ static void open_sheet(int kind, int from_edge);
 static void close_sheet(void);
 static void go(int index, int animate);
 static void resize_text(int index, int level, int anchor);
+static void refresh_live(int index);
 
 static uint32_t ticks(void) { return (uint32_t)(now() * 1000); }
 static double thread_cpu_ms(void) {
@@ -416,8 +422,10 @@ static void free_blocks(View *v) {
   free(v->text_blocks);
   v->text_blocks = NULL;
   v->nblocks = 0;
-  for (int j = 0; j < v->live_count; j++)
+  for (int j = 0; j < v->live_count; j++) {
     free(v->live[j].raw);
+    free(v->live[j].expanded);
+  }
   v->live_count = 0;
 }
 static void invalidate_page(int index) {
@@ -567,7 +575,9 @@ static void build_body(int index) {
       y += height;
       if (strstr(raw, "{{") && v->live_count < MAX_BINDINGS)
         v->live[v->live_count++] =
-            (Live){.obj = o, .raw = strdup(raw), .font = font};
+            (Live){.obj = o, .raw = strdup(raw), .expanded = strdup(expanded),
+                   .font = font, .prefix = (int)(txt - expanded), .code = code,
+                   .strong = strong, .ink = ink, .block = v->nblocks - 1};
     }
     free(raw);
     free(expanded);
@@ -582,6 +592,50 @@ static void build_body(int index) {
   lv_obj_set_clickable(end, false);
   v->height = scenes[index].height = y + 24;
   lv_obj_update_layout(v->body);
+}
+/* Change only live spans at rest. Rebuilding a long route card every second
+ * needlessly rasterized every static paragraph and stalled the next touch. */
+static void refresh_bindings(int index, View *v, int visible) {
+  int changed = 0, scroll = lv_obj_get_scroll_y(v->body);
+  for (int i = 0; i < v->live_count; i++) {
+    Live *live = &v->live[i];
+    size_t cap = strlen(live->raw) + 2048;
+    char *text = malloc(cap);
+    if (!text) continue;
+    expand(live->raw, text, cap);
+    if (live->expanded && !strcmp(text, live->expanded)) { free(text); continue; }
+    if (!changed++ && visible) invalidate_page(index);
+    lv_obj_t *o = live->obj;
+    int oldheight = lv_obj_get_height(o), bottom = lv_obj_get_y(o) + oldheight;
+    lv_span_t *span;
+    while ((span = lv_spangroup_get_child(o, 0))) lv_spangroup_delete_span(o, span);
+    markdown(o, text + (strlen(text) >= (size_t)live->prefix ? live->prefix : 0),
+             live->font, live->ink, scenes[index].accent, live->code, live->strong);
+    lv_obj_update_layout(o);
+    int delta = lv_obj_get_height(o) - oldheight;
+    if (delta) {
+      uint32_t children = lv_obj_get_child_count(v->body);
+      for (uint32_t j = 0; j < children; j++) {
+        lv_obj_t *child = lv_obj_get_child(v->body, j);
+        if (child != o && lv_obj_get_y(child) >= bottom)
+          lv_obj_set_y(child, lv_obj_get_y(child) + delta);
+      }
+      if (bottom <= scroll) scroll += delta;
+      v->height += delta;
+      if (visible) scenes[index].height = v->height;
+    }
+    free(live->expanded); live->expanded = text;
+  }
+  if (changed) {
+    if (visible) layout_generation++;
+    lv_obj_update_layout(v->body);
+    lv_obj_scroll_to_y(v->body, scroll, LV_ANIM_OFF);
+  }
+}
+static void refresh_live(int index) {
+  refresh_bindings(index, &views[index], 1);
+  for (int z = 0; z < 5; z++)
+    if (prepared[index][z].body) refresh_bindings(index, &prepared[index][z], 0);
 }
 static void update_dots(void) {
   int visible = count < 9 ? count : 9,
@@ -1043,13 +1097,61 @@ static void sheet_event(lv_event_t *e) {
   if (c == LV_EVENT_SHORT_CLICKED && lv_event_get_target_obj(e) == sheet)
     close_pending = 1;
 }
+static int sense_command(const char *command) {
+  int fd = open("/run/sense/control", O_WRONLY | O_NONBLOCK | O_CLOEXEC);
+  if (fd < 0) return -1;
+  char line[96]; int n = snprintf(line, sizeof line, "%s\n", command);
+  int ok = n > 0 && n < (int)sizeof line && write(fd, line, n) == n;
+  close(fd); return ok ? 0 : -1;
+}
+static void read_checkpoints(void) {
+  checkpoint_count = 0;
+  FILE *f = fopen("/run/sense/checkpoints", "r"); if (!f) return;
+  char line[160];
+  while (checkpoint_count < 32 && fgets(line, sizeof line, f)) {
+    char id[40], name[80];
+    if (sscanf(line, "%39s\t%79[^\n]", id, name) != 2 || !valid_id(id)) continue;
+    snprintf(checkpoint_ids[checkpoint_count], 40, "%s", id);
+    snprintf(checkpoint_labels[checkpoint_count++], 80, "%s", name);
+  }
+  fclose(f);
+}
+static void update_sense_sheet(void) {
+  if (!sheet || !sense_sheet_status || (sheet_kind != 4 && sheet_kind != 5)) return;
+  char a[128], b[128], c[128], mode[64], text[480];
+  if (sheet_kind == 5) {
+    binding("sense.heading", a, sizeof a);
+    binding("sense.calibration", b, sizeof b);
+    snprintf(text, sizeof text, "%s\n\n%s", a, b);
+  } else {
+    binding("sense.position_source", a, sizeof a);
+    binding("sense.position_age", b, sizeof b);
+    binding("sense.position_accuracy", c, sizeof c);
+    binding("sense.mode", mode, sizeof mode);
+    snprintf(text, sizeof text, "%s · %s\n%s\n%s", a, b, c, mode);
+  }
+  if (!strcmp(lv_label_get_text(sense_sheet_status), text)) return;
+  lv_label_set_text(sense_sheet_status, text);
+  lv_obj_update_layout(sheet_card);
+  if (sheet_picture && card && lv_snapshot_reshape_draw_buf(sheet_card, card) == LV_RESULT_OK)
+    lv_snapshot_take_to_draw_buf(sheet_card, LV_COLOR_FORMAT_XRGB8888, card);
+}
 static void button_event(lv_event_t *e) {
   if (multi_latched)
     return;
   under_valid = 0; /* every action changes the scene under the sheet */
   intptr_t action = (intptr_t)lv_event_get_user_data(e);
   tap_events++;
-  if (action >= 0) {
+  if (action <= -100 && -action - 100 < checkpoint_count) {
+    char command[64]; snprintf(command, sizeof command, "fix %s", checkpoint_ids[-action - 100]);
+    if (!sense_command(command)) close_pending = 1;
+  } else if (action == -4 || action == -5) {
+    sense_sheet_pending = action == -4 ? 4 : 5; close_pending = 1;
+  } else if (action == -6) sense_command("calibrate");
+  else if (action == -7) sense_command("mode walk");
+  else if (action == -8) sense_command("mode bus");
+  else if (action == -9) sense_command("cancel");
+  else if (action >= 0) {
     go((int)action, 0);
     close_pending = 1;
   } else if (action == -1) {
@@ -1098,7 +1200,8 @@ static void open_sheet(int kind, int from_edge) {
   if (from_edge)
     lv_indev_set_scroll_limit(pointer, 1);
   sheet_kind = kind;
-  sheet_height = kind == 1   ? 480
+  sense_sheet_status = NULL;
+  sheet_height = kind >= 4 ? 800 : kind == 1   ? 480
                  : kind == 2 ? clamp(100 + count * 100, 300, 800)
                              : 420;
   sheet_initializing = 1;
@@ -1171,14 +1274,50 @@ static void open_sheet(int kind, int from_edge) {
   label(sheet_card,
         kind == 1   ? "Device"
         : kind == 2 ? "Scenes"
-                    : "Text",
+        : kind == 4 ? "I’m here"
+        : kind == 5 ? "Compass" : "Text",
         2, INK, 34, 24, 572);
   if (kind == 1) {
     char txt[256], value[128];
-    binding("battery.percent", value, sizeof value);
+    binding(battery < 0 ? "battery.state" : "battery.percent", value, sizeof value);
     snprintf(txt, sizeof txt, "Battery  %s\nWi-Fi  %s\nLink  %s", value,
              wifi_state, !strcmp(net_name, "usb0") ? "USB" : net_name);
     label(sheet_card, txt, 1, INK, 34, 126, 572);
+    if (sense_available()) {
+      button(sheet_card, "I’m here", 34, 314, 270, -4);
+      button(sheet_card, "Compass", 336, 314, 270, -5);
+    }
+  } else if (kind >= 4) {
+    sense_sheet_status = lv_label_create(sheet_card);
+    lv_obj_set_style_text_font(sense_sheet_status, &faces[kind == 4 ? 0 : 1], 0);
+    lv_obj_set_style_text_color(sense_sheet_status, color(INK), 0);
+    lv_obj_set_pos(sense_sheet_status, 34, 100);
+    lv_obj_set_width(sense_sheet_status, 572);
+    lv_label_set_text(sense_sheet_status, "");
+    if (kind == 4) {
+      button(sheet_card, "Walking", 34, 220, 270, -7);
+      button(sheet_card, "On bus", 336, 220, 270, -8);
+      read_checkpoints();
+      lv_obj_t *list = lv_obj_create(sheet_card); flat(list);
+      lv_obj_set_pos(list, 0, 330); lv_obj_set_size(list, W, 450);
+      lv_obj_set_scroll_dir(list, LV_DIR_VER); lv_obj_set_scroll_chain_ver(list, true);
+      lv_obj_add_event_cb(list, invalidate_sheet_picture, LV_EVENT_SCROLL, NULL);
+      for (int i = 0; i < checkpoint_count; i++) {
+        char title[80]; size_t bytes = 0; int chars = 0;
+        const char *name = checkpoint_labels[i];
+        while (name[bytes] && chars < 24) {
+          bytes++; while (name[bytes] && ((unsigned char)name[bytes] & 0xc0) == 0x80) bytes++;
+          chars++;
+        }
+        snprintf(title, sizeof title, "%.*s", (int)bytes, name);
+        button(list, title, 14, i * 100, 612, -100 - i);
+      }
+    } else {
+      label(sheet_card, "Away from the charger and metal, turn the phone through a figure eight for 40 seconds. Then compare a known direction.", 1, INK, 34, 330, 572);
+      button(sheet_card, "Calibrate", 34, 650, 270, -6);
+      button(sheet_card, "Cancel", 336, 650, 270, -9);
+    }
+    update_sense_sheet();
   } else if (kind == 2) {
     lv_obj_t *list = lv_obj_create(sheet_card);
     flat(list);
@@ -2160,8 +2299,10 @@ int main(int argc, char **argv) {
           !contacts_active && !sheet && !lv_obj_is_scrolling(pager) &&
           !lv_obj_is_scrolling(views[current].body)) {
         int scroll = lv_obj_get_scroll_y(views[current].body);
-        build_body(current);
-        lv_obj_scroll_to_y(views[current].body, scroll, LV_ANIM_OFF);
+        if (strstr(scenes[current].body, "{{graph.")) {
+          build_body(current);
+          lv_obj_scroll_to_y(views[current].body, scroll, LV_ANIM_OFF);
+        } else refresh_live(current);
       }
       if (stat_phase == 0 && (battery_noted < 0 || t - battery_noted >= 300)) {
         char state[48];
@@ -2169,12 +2310,16 @@ int main(int argc, char **argv) {
              quoted(battery_state, state, sizeof state), battery_mv, battery);
         battery_noted = t;
       }
+      if (!moving && sheet && stat_phase == 3) update_sense_sheet();
       stats_end = now();
       stats_ms = (stats_end - began) * 1000;
       stat_phase = (stat_phase + 1) % 5;
     }
     if (close_pending)
       close_sheet();
+    if (sense_sheet_pending && !sheet) {
+      int kind = sense_sheet_pending; sense_sheet_pending = 0; open_sheet(kind, 0);
+    }
     if (zoom_pending >= 0)
       apply_zoom();
     if (reloading || reload_requested) {

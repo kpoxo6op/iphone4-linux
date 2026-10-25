@@ -10,6 +10,8 @@
 #endif
 #define LV_DEF_REFR_PERIOD 8
 #define LV_DPI_DEF 220
+/* Keep clock times intact at a line break. */
+#define LV_TXT_BREAK_CHARS " ,.;-_)]}"
 #define LV_USE_FLOAT 1
 #define LV_USE_GESTURE_RECOGNITION 1
 #define LV_USE_THEME_DEFAULT 0

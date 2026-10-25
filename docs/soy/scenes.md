@@ -200,3 +200,18 @@ tool and `deploy.py` against a simulated phone: busybox ash in a private
 namespace with a headless renderer. It covers the boot install, hot publishing,
 kept reading position, rejected scenes, remove, undo, show, capture, offline
 saves and the Tailscale fallback. It makes no hardware claims.
+
+### Sense files
+
+When the optional `n90-sense` producer is installed, `{{sense.heading}}`,
+`{{sense.position}}`, `{{sense.position_source}}`, `{{sense.position_age}}`,
+`{{sense.position_accuracy}}`, `{{sense.steps}}`, `{{sense.wifi}}`,
+`{{sense.wifi_hint}}`, `{{sense.calibration}}`, `{{sense.mode}}`,
+`{{sense.target}}`, `{{sense.distance}}`, `{{sense.eta}}` and
+`{{sense.leave_by}}` bind private plain files under `/run/sense`.
+Always show position source, age and model uncertainty together. A stopped
+producer becomes unavailable after five seconds. Values freeze during gestures
+and update at rest without resetting reading position. The Device sheet offers
+landmark fixes and calibration only while the producer is live. Source, sensor
+calibration and field-accuracy limits are documented in
+[`kernel/n90-sense/README.md`](../../kernel/n90-sense/README.md).

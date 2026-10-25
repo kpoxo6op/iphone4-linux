@@ -17,7 +17,7 @@ def turn_list(route):
         if generic and s['metres']<25:
             pending+=s['metres']; continue
         if generic: label='public path' if label in ('footway','pavement','cycleway') else 'access road'
-        if groups and groups[-1]['name']==label:
+        if groups and groups[-1]['name']==label and (label not in ('public path','access road','path','steps') or abs((s['bearing']-groups[-1]['bearing']+180)%360-180)<40):
             groups[-1]['metres']+=s['metres']+pending
         else: groups.append({'name':label,'bearing':s['bearing'],'metres':s['metres']+pending})
         pending=0
@@ -49,6 +49,19 @@ def journey_text(journey,stops,notes=None):
     return '\n\n'.join(lines)
 
 
+def compact_journey(journey,stops,notes=None):
+    if 'error' in journey:return 'No checked journey: '+journey['error']
+    lines=[];notes=notes or {}
+    for i,leg in enumerate(journey['legs']):
+        if leg['mode']=='ride':
+            a,b=stops[leg['from']],stops[leg['to']]
+            lines.append(f"{leg['route']} {clock(leg['depart'])}: {a['stop_code']} {a['stop_name']} → {b['stop_code']} {b['stop_name']} at {clock(leg['arrive'])}.")
+        else:
+            r=leg['route'];text=notes.get(str(i),turn_list(r).replace('\n\n',' '))
+            lines.append(f"Walk {round(r['metres'])} m / {minutes(r['metres'])} min. {text}")
+    return '\n\n'.join(lines)
+
+
 def departure_text(journey,stops,schedules,start,end):
     lines=[]
     for l in journey['legs']:
@@ -77,6 +90,9 @@ def compose(graph,config,records,output):
     legend=['S '+name(dest),'A bus towards City','B bus from City']+[str(i)+' '+name(w['poi']) for i,w in enumerate(records['walks'],1)]
     local_legend='\n\n'.join(x for x in legend if x[0] in placed)
     mapbody=f"# Near the shop\n\nNorth ↑   |----| 120 m\nS shop  A home  B arrival\n{config.get('map_key','Numbers: places below')}\n```\n{local}\n```\n\nDots: walking paths.\n\n~ water edge\n\n{local_legend}\n\n{notes.get('map','')}\n\n# Walking range\n\nNorth ↑   |----| 480 m\n```\n{reach}\n```\n\na 5 min · b 10 min\n\nc 15 min · S shop\n\n"+'\n\n'.join(x for x in legend if x[0] in '123')+f"\n\nEdges of mapped walking reach at 4.3 km/h. Crossings and pauses add time. Roads are approximate at this scale.\n\nOpenStreetMap contributors · ODbL. Offline extract {config.get('osm_date','date in manifest')}. No live position."
+    if config.get('sense'):
+        mapbody=mapbody.removesuffix('No live position.')+'Position source and age are below.'
+        mapbody+='\n\n# Position\n\n{{sense.position}}\n\n{{sense.position_source}} · {{sense.position_age}}\n\n{{sense.position_accuracy}}\n'
     write_scene(scenes,'map','Map',mapbody)
     walks=[]
     pickup=sum(int(v)*m for v,m in zip(config['pickup'].split(':'),(3600,60)))
@@ -85,6 +101,8 @@ def compose(graph,config,records,output):
         text=notes.get('walks',{}).get(str(w['poi']['id']),turn_list(r)+'\n\nReturn by reversing this route.')
         walks.append(f"# {i} {name(w['poi'])}\n\n{round(r['metres'])} m · {n} min each way\n\nLeave by {leave} for the shop by {clock(pickup-300)}. Pickup assumed {config['pickup']}.\n\n{text}")
     walks.append(notes.get('walks_end','If pickup changes, leave one walking time plus five minutes before the new pickup.'))
+    if config.get('sense'):
+        walks.append('# Return timing\n\n{{sense.target}} · {{sense.distance}}\n\n{{sense.eta}}\n\n{{sense.leave_by}}\n\nEstimates update after a landmark fix. Scheduled bus times are on Getting home.')
     write_scene(scenes,'walks','While you wait','\n\n'.join(walks))
     homebody=f"# Home by {config['back_by']}\n\n{journey_text(back,stops,notes.get('return'))}\n\nHome about {clock(back['arrive'])}.\n\n# Departures home\n\n{departure_text(back,stops,schedules,10*3600,13*3600)}\n\n{notes.get('return_end','')}\n\n# If you are lost\n\n{notes.get('recovery','Return to the named departure stop using the route card. Ask a person for the stop by its number. This phone has no mobile service.')}\n\n# Battery\n\n{{{{battery.state}}}} · {{{{battery.voltage}}}}\n\n{notes.get('battery','Battery duration has not been measured. Sleep the screen between checks. Keep a reserve for the way home.')}"
     write_scene(scenes,'home','Getting home',homebody,'amber')
@@ -92,7 +110,7 @@ def compose(graph,config,records,output):
     for alt in records.get('alternatives',[]):
         poi=alt['poi']; tag=poi['tags']; address=' '.join(tag.get(k,'') for k in ('addr:housenumber','addr:street')).strip(); phone=tag.get('phone',tag.get('contact:phone',''))
         address=address or config.get('alternative_addresses',{}).get(str(poi['id']),'Address not mapped; use the named centre.')
-        text=f"# {name(poi)}\n\n{address}\n\n{phone}\n\nPublic-holiday opening unconfirmed.\n\n{poi.get('route_endpoint','')}\n\n## There\n\n{journey_text(alt['outbound'],stops)}\n\n## Home\n\n{journey_text(alt['return'],stops)}"
+        text=f"# {name(poi)}\n\n{address}\n\n{phone}\n\nPublic-holiday opening unconfirmed.\n\n{poi.get('route_endpoint','')}\n\n## There\n\n{compact_journey(alt['outbound'],stops,config.get('alternative_notes',{}).get(str(poi['id']),{}).get('outbound'))}\n\n## Home\n\n{compact_journey(alt['return'],stops,config.get('alternative_notes',{}).get(str(poi['id']),{}).get('return'))}"
         alternatives.append(text)
     if alternatives: write_scene(scenes,'alternatives','Other centres','\n\n'.join(alternatives))
     ids=['reader','map','walks','home']+(['alternatives'] if alternatives else [])

@@ -91,6 +91,10 @@ start() {
 	journal "$1"
 	case "$1" in
 	soy) start_soy ;;
+	sense)
+		nohup /opt/n90-sense/n90-sense /opt/n90-sense /run/sense >/run/sense/service.log 2>&1 </dev/null &
+		echo $! > /run/keep/sense.pid
+		say "started sense" ;;
 	touch)
 		cd /opt/n90-touch && nohup ./n90-touch serve n90-z2.bin \
 			>/run/n90-touch.log 2>&1 </dev/null &
@@ -122,6 +126,7 @@ start() {
 installed() {
 	case "$1" in
 	soy) [ -x /opt/soy/current/soy ] ;;
+	sense) [ -x /opt/n90-sense/n90-sense ] && [ -f /opt/n90-sense/graph.txt ] && [ -d /run/sense ] ;;
 	touch) [ -x /opt/n90-touch/n90-touch ] ;;
 	battery) [ -x /usr/sbin/n90-battery ] ;;
 	wdt) [ -x /usr/sbin/n90-wdt ] ;;
@@ -187,14 +192,14 @@ check_usb() {
 	[ -n "$u" ] && usb_was=$u
 }
 
-comm_soy=soy comm_touch=n90-touch comm_battery=n90-battery comm_wdt=n90-wdt
+comm_sense=n90-sense comm_soy=soy comm_touch=n90-touch comm_battery=n90-battery comm_wdt=n90-wdt
 comm_wifi=n90-wifi-keep comm_time=n90-time comm_ota=n90-ota
 
 say "keep started"
 missing_soy=0 missing_touch=0 missing_battery=0 missing_wdt=0 missing_wifi=0
-missing_time=0 missing_ota=0
+missing_time=0 missing_ota=0 missing_sense=0
 while :; do
-	for s in wdt soy touch battery wifi time ota; do
+	for s in wdt soy touch battery wifi time ota sense; do
 		eval "m=\$missing_$s"
 		eval "comm=\$comm_$s"
 		if ! installed "$s" || held "$s" || alive "$s" "$comm"; then

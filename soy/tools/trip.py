@@ -5,7 +5,7 @@ The AI supplies a private profile with the given home and selected places;
 this tool computes routes and dated schedules. It never infers current position.
 Example: --request 'Town tomorrow 9:30, back by 13:00'.
 """
-import argparse,datetime,hashlib,json,os,re,subprocess,sys,time
+import argparse,datetime,hashlib,json,os,re,shutil,subprocess,sys,time
 from pathlib import Path
 from zoneinfo import ZoneInfo
 sys.path.insert(0,str(Path(__file__).parent/'nav'))
@@ -19,6 +19,7 @@ def request_config(config,text,today=None):
     match=re.fullmatch(r'\s*(.+?)\s+(tomorrow|today|\d{4}-\d{2}-\d{2})\s+(\d{1,2}:\d{2})\s*,\s*back by\s+(\d{1,2}(?::\d{2})?)\s*',text,re.I)
     if not match: raise ValueError("Use 'Place tomorrow 9:30, back by 13:00'; AI resolves other wording into the private config")
     place,day,arrive,back=match.groups(); c=json.loads(json.dumps(config))
+    arrive=datetime.time.fromisoformat(arrive.zfill(5)).strftime('%H:%M')
     today=today or datetime.datetime.now(ZoneInfo('Pacific/Auckland')).date()
     date=today+datetime.timedelta(days=day.lower()=='tomorrow') if day.lower() in ('today','tomorrow') else datetime.date.fromisoformat(day)
     candidates=[config['destination']]+config.get('alternatives',[])+config.get('places',[])
@@ -26,6 +27,7 @@ def request_config(config,text,today=None):
     if len(matches)!=1: raise ValueError('Place needs one explicit OSM selection in the private profile; no guessed destination')
     bh,bm=(back.split(':')+['00'])[:2]; bh=int(bh)
     if ':' not in back and bh<int(arrive.split(':')[0]) and bh<12: bh+=12
+    datetime.time(bh,int(bm))
     c.update(destination=matches[0],date=str(date),arrive_by=arrive,back_by=f'{bh:02d}:{int(bm):02d}')
     changed=any(c[k]!=config[k] for k in ('date','arrive_by','back_by')) or c['destination']['id']!=config['destination']['id']
     if changed:
@@ -48,7 +50,7 @@ def plan(graph,config,feed):
         except ValueError: high=mid; continue
         if j['arrive']<=deadline: low=mid
         else: high=mid
-    outbound=feed.journey(graph,home,dest,low//300*300)
+    outbound=feed.journey(graph,home,dest,max(0,low//300*300-300))
     pickup=seconds(config['pickup']+':00')
     back=feed.journey(graph,dest,home,pickup+1800)
     if back['arrive']>seconds(config['back_by']+':00'):
@@ -74,6 +76,7 @@ def main():
     p.add_argument('--osm',type=Path,required=True); p.add_argument('--gtfs',type=Path,required=True)
     p.add_argument('--out',type=Path,required=True); p.add_argument('--prepared',type=Path,help='Previously checked private route-data JSON; request overrides are not allowed')
     p.add_argument('--put',action='store_true'); p.add_argument('--operator',type=Path,default=Path(__file__).resolve().parents[2])
+    p.add_argument('--sense',action='store_true',help='Build and optionally install the private sense graph with the scenes')
     a=p.parse_args(); os.umask(0o077); started=time.monotonic()
     if a.prepared and a.request: p.error('A prepared pack cannot be changed by a new request; recompute routes')
     # A public checkout must never accidentally acquire coordinates or scenes.
@@ -99,11 +102,28 @@ def main():
             legs=records[key]['legs']
             if distance(legs[0]['route']['start'],start)>1 or distance(legs[-1]['route']['end'],end)>1:
                 raise ValueError('Prepared journey endpoints differ from the private profile')
+    if a.sense:config['sense']=True
     scenes=compose(graph,config,records,a.out)
+    sense=None
+    if a.sense:
+        from sense_pack import build_sense
+        sense=a.out/'sense'
+        sense.mkdir(exist_ok=True,mode=0o700)
+        known=a.operator/'.runtime/phone/private/sense/wifi-known.tsv'
+        if known.exists() and not (sense/'wifi-known.tsv').exists():
+            shutil.copyfile(known,sense/'wifi-known.tsv')
+        build_sense(graph,config,records,sense,root/'output/sense/wmm-native',root/'output/sense/WMM.COF')
     manifest={'built_at':datetime.datetime.now(datetime.timezone.utc).isoformat(),'seconds':round(time.monotonic()-started,3),'request':a.request,'service_date':config['date'],'osm':raw.get('provenance',{}),'gtfs':feed.provenance,'files':{str(f.relative_to(a.out)):hashlib.file_digest(f.open('rb'),'sha256').hexdigest() for f in scenes.iterdir() if f.is_file()},'position':'unavailable until measured or explicitly given','verification':'Independent route and departure checks plus phone capture/frame checks are separate release gates.'}
     (a.out/'manifest.json').write_text(json.dumps(manifest,indent=2)+'\n')
     if a.put:
         subprocess.run([sys.executable,str(a.operator/'soy/tools/scene.py'),'put',str(scenes),'--show','-m','Offline trip pack'],cwd=a.operator,check=True)
+        if sense:
+            subprocess.run([sys.executable,str(root/'kernel/n90-sense/deploy.py'),'--ssh-config',str(a.operator/'.runtime/phone/private/ssh_config'),'--config',str(sense),'--receipt',str(a.out/'sense-deploy.json')],check=True)
+            # Retain precisely the deployed inputs for the laptop's next boot.
+            boot=a.operator/'.runtime/phone/private/sense'
+            boot.mkdir(exist_ok=True,mode=0o700)
+            for f in sense.iterdir():
+                if f.is_file():shutil.copyfile(f,boot/f.name)
     print(json.dumps({'scenes':len(manifest['files'])-1,'elapsed_seconds':round(time.monotonic()-started,2),'published':a.put,'position':'unavailable'}))
 
 if __name__=='__main__': main()

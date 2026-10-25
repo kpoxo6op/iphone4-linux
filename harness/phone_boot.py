@@ -399,6 +399,7 @@ def boot(run, record):
     deploy_offline(run)
     deploy_time(run)
     deploy_ota(run)
+    deploy_sense(run)
     deploy_keep(run)
     return boot_id
 
@@ -725,6 +726,21 @@ def tune_scheduler(run):
                  'echo 500000 > $F/runtime && echo 50000000 > $F/period')
     log(run, 'scheduler_tuned' if result.returncode == 0 else 'scheduler_untuned',
         detail=result.stderr.decode()[-200:])
+
+
+def deploy_sense(run):
+    """Optional private trip and sensor service. A missing build never blocks boot."""
+    config = PRIVATE / 'sense'
+    binary = ROOT / 'output/sense/n90-sense'
+    if not binary.exists() or not (config / 'manifest.json').exists():
+        log(run, 'sense_skipped', reason='no private sense pack or build')
+        return
+    command = [sys.executable, str(ROOT / 'kernel/n90-sense/deploy.py'),
+               '--ssh-config', str(SSH_CONFIG), '--host', 'iphone4-usb',
+               '--config', str(config), '--receipt', str(run / 'sense-private.json')]
+    result = sp.run(command, capture_output=True, timeout=120)
+    log(run, 'sense_started' if result.returncode == 0 else 'sense_failed',
+        returncode=result.returncode, detail=result.stderr.decode()[-200:])
 
 
 def deploy_keep(run):

@@ -74,3 +74,12 @@ walking graphs, feed expiry and service-day midnight semantics. The existing
 `check_scene_tool.py` simulated-phone flow owns atomic bundle rejection,
 publication and one-step undo. Neither proves physical touch, position,
 heading, battery duration or phone frame performance.
+
+Add `--sense` after building `kernel/n90-sense` to export the private graph,
+WMM2025 model and landmark choices. With `--put`, these are installed alongside
+the scenes and retained in the operator's private boot directory. Known Wi-Fi
+mappings are retained; OSM-name sightings alone are hints. The Map and Walks
+cards use the documented `{{sense.*}}` files. See
+[`kernel/n90-sense/README.md`](../../kernel/n90-sense/README.md) for calibration,
+uncertainty, controls, field scoring and hardware limitations. The arrive-by
+search also reserves five minutes before its latest computed departure.

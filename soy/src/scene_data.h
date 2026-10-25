@@ -387,7 +387,29 @@ static inline void time_sync_text(char *out, size_t n) {
   else
     snprintf(out, n, "Not synced");
 }
+/* Only the documented plain files are bindable. A stopped/stale producer
+ * never leaves an apparently live heading or position on a scene. */
+static inline int sense_available(void) {
+  char text[64];
+  if (read_text("/run/sense/updated", text, sizeof text)) return 0;
+  double age = difftime(time(NULL), (time_t)atof(text));
+  return age >= -2 && age <= 5;
+}
+static inline const char *sense_binding(const char *key, char *out, size_t n) {
+  static const char *allowed[] = {"heading", "steps", "position", "position_source",
+    "position_accuracy", "position_age", "position_name", "wifi", "wifi_hint", "calibration", "mode",
+    "target", "distance", "eta", "leave_by"};
+  for (size_t i = 0; i < sizeof allowed / sizeof *allowed; i++)
+    if (!strcmp(key, allowed[i])) {
+      char file[128]; snprintf(file, sizeof file, "/run/sense/%s", key);
+      if (sense_available() && !read_text(file, out, n)) return out;
+      break;
+    }
+  snprintf(out, n, "Unavailable"); return out;
+}
 static inline const char *binding(const char *key, char *out, size_t n) {
+  if (!strncmp(key, "sense.", 6))
+    return sense_binding(key + 6, out, n);
   if (!strcmp(key, "battery.percent")) {
     if (battery >= 0)
       snprintf(out, n, battery_estimate ? "~%d%%" : "%d%%", battery);
