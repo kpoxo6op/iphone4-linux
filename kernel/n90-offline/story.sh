@@ -13,6 +13,13 @@ export PATH=/bin:/sbin:/usr/bin:/usr/sbin
 DIR=/opt/n90-offline
 MODEL=stories15M-q80.bin
 
+# A deliberately published offline trip pack owns the day's library and its
+# battery reserve. Removing/undoing the pack restores background stories.
+if grep -q '^source: offline trip pack$' /opt/soy/current/scenes/*.md 2>/dev/null; then
+	echo 'n90-story: offline trip pack active; keeping the library and energy reserve' >&2
+	exit 3
+fi
+
 # A hot phone sheds optional work (kernel/n90-battery, /run/thermal/hot).
 [ -e /run/thermal/hot ] && { echo "n90-story: the phone is hot; not now" >&2; exit 3; }
 

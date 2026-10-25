@@ -103,6 +103,7 @@ Each scene is limited to 128 KiB and 2,048 lines. Long content scrolls.
 | Command | What it does |
 | --- | --- |
 | `put FILE [--show] [--at N] [-m WHY]` | Add a scene, or replace the one with the same ID in place. `-` reads standard input. |
+| `put DIRECTORY [--show] [-m WHY]` | Replace the whole library with a checked `index` and Markdown bundle, in one change. `undo` restores the previous library. With `--show`, open its first scene. |
 | `remove ID` | Take a scene off the phone. |
 | `show ID` | Bring a scene to the front now and after every reboot. |
 | `list` | Library history, what the phone shows (`>`), and the scene that opens after a reboot (`*`). |

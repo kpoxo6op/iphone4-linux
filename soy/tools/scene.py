@@ -379,10 +379,11 @@ def adopt(library, phone):
     return adopted
 
 
-def sync(library, phone, receipt=None, show=None):
+def sync(library, phone, receipt=None, show=None, import_phone=True):
     """Make the phone show the library's committed scenes. Returns a summary."""
     try:
-        adopt(library, phone)
+        if import_phone:
+            adopt(library, phone)
     except Unreachable:
         raise
     except Failure:
@@ -456,7 +457,7 @@ def ppm_to_png(ppm, out):
                     chunk(b'IDAT', zlib.compress(rows, 6)) + chunk(b'IEND', b''))
 
 
-def change(library, phone, message, edit, show=None):
+def change(library, phone, message, edit, show=None, import_phone=True):
     """Apply an edit to the library, check, commit and publish it."""
     saved = {p: p.read_bytes() for p in library.path.iterdir() if p.is_file()}
     edit()
@@ -475,12 +476,12 @@ def change(library, phone, message, edit, show=None):
     revision = library.head()[:7]
     print(f'Saved in the scene library ({revision}).' if committed else
           'The library already had these scenes.')
-    return publish(library, phone, show)
+    return publish(library, phone, show, import_phone=import_phone)
 
 
-def publish(library, phone, show=None):
+def publish(library, phone, show=None, import_phone=True):
     try:
-        print(sync(library, phone, show=show))
+        print(sync(library, phone, show=show, import_phone=import_phone))
         return 0
     except Unreachable as exc:
         print(f'{exc}. The phone will get these scenes on its next boot or publish.')
@@ -709,6 +710,29 @@ def main():
     library = Library(a.library).open()
 
     if a.command == 'put':
+        if Path(a.file).is_dir():
+            if any(x is not None for x in (a.id, a.label, a.accent, a.at)):
+                raise Failure('A bundle supplies its own IDs, labels and order')
+            bundle = Path(a.file)
+            check(bundle)
+            ids = scene_ids((bundle / 'index').read_text())
+            files = {i: (bundle / (i + '.md')).read_bytes() for i in ids}
+            # Preserve phone-authored work before replacing the whole library.
+            # Importing it after the edit would silently undo a deliberate removal.
+            try:
+                adopt(library, phone)
+            except Unreachable:
+                pass
+
+            def edit_bundle():
+                for p in library.path.glob('*.md'):
+                    p.unlink()
+                for i, data in files.items():
+                    (library.path / (i + '.md')).write_bytes(data)
+                library.write_index(ids)
+            return change(library, phone, 'Replace scene bundle' +
+                          (f': {a.message}' if a.message else ''), edit_bundle,
+                          ids[0] if a.show else None, import_phone=False)
         scene_id, text = read_scene(a.file, a.id, a.label, a.accent)
 
         def edit():
