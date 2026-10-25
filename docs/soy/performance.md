@@ -409,3 +409,19 @@ stream or gate. Omitting it retains the established `reader` workload. Use it
 to check every view of a newly generated library, rather than relying only on
 its first page pair. This budget ordering is not yet a general viewport-only
 cache for arbitrarily long libraries; the real-device gate still applies.
+
+The first fix above preserved page turns but long trip cards still rebuilt
+font layouts on pinch release (370.9 ms in, 275.9 ms out). Alternate font
+layouts now retain their text objects and cache a bounded reading window.
+Inactive layouts live outside the moving page tree; keeping them underneath
+each page had added work to page turns. Idle passes prepare one paragraph at
+a time and skip unchanged windows. The 160 MiB pixel limit remains unchanged.
+
+On the same five-view private library, all twenty checks (Reading, Pages,
+pinch in and pinch out on each view) passed with zero missed intervals.
+Worst Reading: 13.032 ms; Pages: 15.043 ms; pinch: 15.606 ms; pinch out:
+15.793 ms. Evidence: operator private `navigator/all-scenes-frame-results-v5.json`
+and `frames-cache-v5-*`. Native process recovery checks also passed. The checks
+measure actual input through completed framebuffer damage copies, not panel
+scanout or physical fingers. Uncached content and arbitrarily larger libraries
+still require their own measured acceptance.
