@@ -3,6 +3,7 @@
 #include "sensors.h"
 #include "calibration.h"
 #include "position.h"
+#include "solar.h"
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
@@ -26,7 +27,9 @@ static Position position;static Calibration calibration;static Sensors sensors;
 static double field,declination,pickup,fix_time,position_time,heading=NAN,heading_time,last_step,stride=.75;
 static double acc[3],mag[3],samples[CAL_MAX][3],cal_started,cal_until;
 static int nsamples,steps,walking=1,cal_failed,stationary_peaks,target_override=-1;
-static char fix_name[80]="Unavailable",source[64]="unavailable";
+static char fix_name[80]="Unavailable",source[64]="unavailable",anchor_source[64]="unavailable";
+static double anchor_lat,anchor_lon,anchor_accuracy;
+static char bearing_check[100]="No shadow check recorded";
 static FILE *journal;
 static double mono(void){struct timespec t;clock_gettime(CLOCK_MONOTONIC,&t);return t.tv_sec+t.tv_nsec/1e9;}
 static double epoch(void){struct timespec t;clock_gettime(CLOCK_REALTIME,&t);return t.tv_sec+t.tv_nsec/1e9;}
@@ -74,11 +77,39 @@ static void given_fix(const Checkpoint *point,const char *kind)
  double lat=0,lon=0;position_latlon(&position,&lat,&lon);
  if(position.valid)record("\"e\":\"sense_fix\",\"id\":\"%s\",\"source\":\"%s\",\"lat\":%.7f,\"lon\":%.7f,\"accuracy_m\":%.1f,\"predicted_lat\":%.7f,\"predicted_lon\":%.7f,\"predicted_accuracy_m\":%.1f,\"anchor_age_s\":%.1f",point->id,kind,point->lat,point->lon,point->accuracy,lat,lon,position.uncertainty,epoch()-fix_time);
  else record("\"e\":\"sense_fix\",\"id\":\"%s\",\"source\":\"%s\",\"lat\":%.7f,\"lon\":%.7f,\"accuracy_m\":%.1f,\"predicted_lat\":null,\"predicted_lon\":null",point->id,kind,point->lat,point->lon,point->accuracy);
+ anchor_lat=point->lat;anchor_lon=point->lon;anchor_accuracy=point->accuracy;snprintf(anchor_source,sizeof anchor_source,"%s",kind);
  position_fix(&position,point->lat,point->lon,point->accuracy);fix_time=position_time=epoch();snprintf(fix_name,sizeof fix_name,"%s",point->label);snprintf(source,sizeof source,"%s",kind);stationary_peaks=0;
+}
+/* The reference uses the last given/known anchor, never magnetic heading or
+ * the particle estimate. At most 15 minutes/1 km of uncertainty is allowed. */
+static int shadow_reference(double now,double *bearing,double *elevation)
+{
+ double age=now-fix_time,az;
+ if(!position.valid||age<0||age>900||anchor_accuracy+age*1.5>1000||solar_direction(now,anchor_lat,anchor_lon,&az,elevation))return -1;
+ *bearing=fmod(az+180,360);return 0;
+}
+static void check_shadow(void)
+{
+ double now=epoch(),reference=0,elevation=0;
+ int recent=!shadow_reference(now,&reference,&elevation);
+ int good=isfinite(heading)&&now-heading_time<2&&!cal_until;
+ int level=fabs(acc[2])>.9&&hypot(acc[0],acc[1])<.25;
+ if(!recent)snprintf(bearing_check,sizeof bearing_check,"Choose I'm here at a nearby landmark");
+ else if(elevation<10||elevation>75)snprintf(bearing_check,sizeof bearing_check,"Sun too low or high for this check");
+ else if(!good)snprintf(bearing_check,sizeof bearing_check,"Calibrate away from metal first");
+ else if(!level)snprintf(bearing_check,sizeof bearing_check,"Keep the phone level, then check");
+ else{
+  double error=remainder(heading-reference,360);
+  snprintf(bearing_check,sizeof bearing_check,"Difference %.0f°; %s",fabs(error),fabs(error)<=5?"reference recorded":"check alignment/calibration");
+  record("\"e\":\"sense_bearing_reference\",\"heading_valid\":true,\"heading_deg\":%.3f,\"reference_deg\":%.3f,\"independent_source\":\"Sun shadow; owner aligned phone\",\"sun_elevation_deg\":%.3f,\"anchor_source\":\"%s\",\"anchor_age_s\":%.1f,\"anchor_accuracy_m\":%.1f",heading,reference,elevation,anchor_source,now-fix_time,anchor_accuracy);
+  return;
+ }
+ record("\"e\":\"sense_bearing_rejected\",\"reason\":\"%s\"",bearing_check);
 }
 static void command(char *line)
 {
- if(!strcmp(line,"calibrate")){cal_started=mono();cal_until=cal_started+40;nsamples=0;cal_failed=0;heading=NAN;record("\"e\":\"sense_calibration_start\"");}
+ if(!strcmp(line,"shadow")){check_shadow();}
+ else if(!strcmp(line,"calibrate")){cal_started=mono();cal_until=cal_started+40;nsamples=0;cal_failed=0;heading=NAN;record("\"e\":\"sense_calibration_start\"");}
  else if(!strcmp(line,"target shop"))target_override=0;
  else if(!strcmp(line,"target bus"))target_override=1;
  else if(!strcmp(line,"cancel")){cal_until=0;record("\"e\":\"sense_calibration_cancel\"");}
@@ -132,6 +163,16 @@ static void status(void)
  char heading_json[32]="null";if(good_heading)snprintf(heading_json,sizeof heading_json,"%.2f",heading);
  publish("heading",good_heading?"%.0f° true · calibrated estimate":"Unavailable · calibration or field check needed",heading);
  publish("steps","%d detected steps",steps);
+ double shadow=0,elevation=0;
+ if(shadow_reference(now,&shadow,&elevation)){
+  publish("sun","Unavailable · choose a nearby landmark");
+  publish("shadow","No recent fix; use I'm here");
+ }else{
+  publish("sun","Sun %.0f° true · %.0f° high",fmod(shadow+180,360),elevation);
+  if(elevation<10||elevation>75)publish("shadow","Sun too low or high for shadow check");
+  else publish("shadow","Shadow %.0f° true · fix %.0f s ago",shadow,now-fix_time);
+ }
+ publish("bearing_check","%s",bearing_check);
  publish("position_source","%s",source);
  publish("position_name","%s",fix_name);
  publish("position_age",position.valid?"%.0f s since last fix":"Unavailable",age);

@@ -398,7 +398,7 @@ static inline int sense_available(void) {
 static inline const char *sense_binding(const char *key, char *out, size_t n) {
   static const char *allowed[] = {"heading", "steps", "position", "position_source",
     "position_accuracy", "position_age", "position_name", "wifi", "wifi_hint", "calibration", "mode",
-    "target", "distance", "eta", "leave_by"};
+    "target", "distance", "eta", "leave_by", "sun", "shadow", "bearing_check"};
   for (size_t i = 0; i < sizeof allowed / sizeof *allowed; i++)
     if (!strcmp(key, allowed[i])) {
       char file[128]; snprintf(file, sizeof file, "/run/sense/%s", key);

@@ -63,6 +63,7 @@ The corresponding scene bindings are `{{sense.NAME}}`:
 | `target`, `distance`, `eta`, `leave_by` | Mapped walking estimate to the shop or return stop; crossing time is extra |
 | `mode` | Walking estimate or on-bus last-fix mode |
 | `calibration` | Figure-eight progress or rejection/acceptance |
+| `sun`, `shadow`, `bearing_check` | Independent solar bearing from a recent given/known anchor, or an explicit unavailable/rejected check |
 | `wifi`, `wifi_hint` | Kernel BSS-cache sightings with per-entry age; name hints are not fixes |
 
 Distance uses reverse Dijkstra labels on the same permitted OSM graph as the
@@ -71,7 +72,7 @@ a trip assumption, not a repair-shop promise. After pickup the default target
 becomes the return stop; the FIFO can choose either target explicitly.
 
 `control` accepts `fix ID`, `calibrate`, `cancel`, `mode walk`, `mode bus`,
-`target shop` and `target bus`. Unknown IDs and overlong lines are rejected.
+`target shop`, `target bus` and `shadow`. Unknown IDs and overlong lines are rejected.
 Only IDs from `checkpoints` appear in Soy's **I'm here** sheet. On-bus mode
 keeps the last fix and grows its uncertainty; it does not turn a timetable
 into a measured position. The physical two-second interaction target still
@@ -119,3 +120,35 @@ For a cached private trip profile, `soy/tools/trip.py --request 'Town today 9:30
 The mode-transition boundary also requires that changing walk/bus mode preserves
 the anchor's source. A transport choice must not relabel where a fix came from;
 the unknown/stale checks alone do not exercise that transition.
+
+## Independent shadow reference
+
+Device → Compass → Check shadow computes the Sun's direction from the accurate
+phone clock and the last given/known location anchor. It does not use magnetic
+heading or the particle estimate to generate its reference. The owner aligns
+the top of the level phone along a vertical object's visible shadow, away from
+its base, then records the comparison. The reference is the Sun's azimuth plus
+180 degrees. It does not change calibration, so the field judge is not used to
+train the estimate being judged.
+
+The FIFO command is `shadow`; bindings are `sun`, `shadow` and `bearing_check`.
+A reference requires an anchor less than 15 minutes old with time-grown model
+uncertainty below 1 km, Sun elevation 10–75 degrees, a fresh calibrated heading
+and a level phone. Rejections remain explicit and cannot become a passing
+heading sample. Accepted `sense_bearing_reference` events record the measured
+heading, calculated bearing, anchor source/age and the owner's alignment claim.
+A visible shadow, vertical object and careful alignment remain field prerequisites;
+software cannot verify those observations. A single comparison is not a general
+heading-accuracy pass.
+
+The geometric solar equations follow
+[NOAA/GML's calculator](https://gml.noaa.gov/grad/solcalc/azel.html), a US Government
+work, with [Meeus-based calculation details](https://gml.noaa.gov/grad/solcalc/calcdetails.html).
+The source-page SHA-256 is
+`fad654ecec69363ca4c4fa84d0923cd7fe4724c6bdb99031a28f03a53dab6bb2`.
+`check_solar.py` compares twelve live NOAA form outputs across hemispheres,
+seasons and the date line. Azimuth differs by less than 0.01 degree, within the
+form's displayed precision. Geometric elevation omits atmospheric refraction;
+this is a calculation check, not field heading accuracy. The process-boundary
+check additionally refuses to record a reference when heading is unavailable;
+calibration-vector tests do not own that FIFO/journal contract.

@@ -6,7 +6,7 @@ p=argparse.ArgumentParser();p.add_argument('--cc',default='cc');p.add_argument('
 root=Path(__file__).resolve().parents[2];src=root/'kernel/n90-sense';out=root/'output/sense';out.mkdir(parents=True,exist_ok=True)
 cc=[a.cc,'-O2','-Wall','-Wextra','-Wformat=2']+(['-static'] if a.static else [])
 def build(name,files,extra=[]):subprocess.run([*cc,*[str(src/f) for f in files],*extra,'-lm','-o',str(out/name)],check=True)
-build('n90-sense',['sense.c','sensors.c','calibration.c','position.c']);build('n90-sense-probe',['probe.c','sensors.c'])
+build('n90-sense',['sense.c','sensors.c','calibration.c','position.c','solar.c']);build('n90-sense-probe',['probe.c','sensors.c'])
 url='https://www.ngdc.noaa.gov/geomag/WMM/data/WMM2025/wmm2025_Linux.zip';sha='e3a0fb9c9275f72574200456da20c3e7408dd7fa54e48abf3c4a0681b1ed3c2b';cache=root/'.cache/navigator/wmm2025';cache.mkdir(parents=True,exist_ok=True);archive=cache/'wmm2025_Linux.zip'
 if not archive.exists():
  with urllib.request.urlopen(url,timeout=60) as response,archive.with_suffix('.download').open('wb') as f:shutil.copyfileobj(response,f)
