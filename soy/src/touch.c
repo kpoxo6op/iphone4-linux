@@ -57,6 +57,15 @@ static lv_obj_t *page_headers[NS];
 static int page_dirty[NS];
 static size_t cache_bytes;
 #define CACHE_LIMIT (160u * 1024 * 1024)
+/* Page turns must retain one viewport per page even when a long document or
+ * extra font layout consumes the text budget. This is capacity, not FPS proof. */
+static size_t page_reserve(void) {
+  size_t missing = 0;
+  for (int i = 0; i < count; i++)
+    if (!page_images[i])
+      missing++;
+  return missing * W * 884 * 4;
+}
 static lv_obj_t *pinch_preview, *pinch_layer;
 static lv_draw_buf_t *pinch_image;
 static int pinch_level;
@@ -258,7 +267,7 @@ static lv_obj_t *label(lv_obj_t *parent, const char *text, int font,
   lv_obj_set_clickable(o, false);
   lv_obj_update_layout(o);
   size_t bytes = (size_t)w * lv_obj_get_height(o) * 4;
-  if (bytes < CACHE_LIMIT && cache_bytes + bytes < CACHE_LIMIT) {
+  if (bytes < CACHE_LIMIT && cache_bytes + bytes + page_reserve() < CACHE_LIMIT) {
     /* Text is immutable for this object's lifetime. Transparent cached glyphs
      * retain the real button's pressed background and native hit testing. */
     lv_draw_buf_t *buf = lv_snapshot_take(o, LV_COLOR_FORMAT_ARGB8888);
@@ -531,7 +540,7 @@ static void build_body(int index) {
        * The budget bounds memory for large AI-generated documents. */
       size_t bytes = (size_t)lv_obj_get_width(o) * height * 4;
       if (!strstr(raw, "{{") && bytes < CACHE_LIMIT &&
-          cache_bytes + bytes < CACHE_LIMIT) {
+          cache_bytes + bytes + page_reserve() < CACHE_LIMIT) {
         lv_obj_set_style_bg_color(o, color(code ? 0x101a14 : BG), 0);
         lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
         lv_draw_buf_t *buf = lv_snapshot_take(o, LV_COLOR_FORMAT_XRGB8888);
@@ -607,11 +616,11 @@ static void pace_scroll(lv_event_t *e) {
 static void page_event(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   pace_scroll(e);
-  if (code == LV_EVENT_SCROLL_BEGIN || code == LV_EVENT_SCROLL_END) {
+  if (code == LV_EVENT_SCROLL_BEGIN) {
     for (int i = 0; i < count; i++) {
       if (!page_images[i])
         continue;
-      int cached = code == LV_EVENT_SCROLL_BEGIN && !page_dirty[i];
+      int cached = !page_dirty[i];
       lv_obj_set_hidden(page_images[i], !cached);
       lv_obj_set_style_bg_opa(views[i].page,
                               cached ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
@@ -625,6 +634,11 @@ static void page_event(lv_event_t *e) {
                            cached ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     }
   }
+  /* Keep the identical viewport image through release, snapping and rest.
+   * Restoring the whole live tree at SCROLL_END added 4 ms to the release
+   * frame, including an END immediately followed by the snap's BEGIN.
+   * Body motion, telemetry and zoom already call invalidate_page(), which
+   * restores the live tree exactly when its pixels need to change. */
   if (code == LV_EVENT_SCROLL_END)
     note_scene();
   if (code != LV_EVENT_SCROLL)
@@ -807,6 +821,13 @@ static void build_pages(void) {
     int scroll = scenes[i].scroll;
     build_body(i);
     lv_obj_scroll_to_y(v->body, scroll, LV_ANIM_OFF);
+  }
+  /* Build every scene's actual font size first. Otherwise an early scene's
+   * five font variants can evict later scenes' scrolling paragraphs and even
+   * the viewport images that page turns depend on. */
+  for (int j = 0; j < count; j++) {
+    int i = (current + j) % count;
+    View *v = &views[i];
     /* Prepare bounded, immutable documents before the first displayed frame.
      * Pinch release then swaps a complete layout instead of rasterizing the
      * entire document on the input thread. Oversized/live documents retain the

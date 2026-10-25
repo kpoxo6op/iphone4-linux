@@ -381,3 +381,31 @@ the present userspace work does not require a reboot.
 Static screens may sleep. Telemetry must not block motion. Independent SSH
 must remain usable. Synthetic contact replay and framebuffer readback cannot
 replace eventual finger-on-glass and visible-motion verification.
+
+## Long offline library: retain the necessary pixels first
+
+The old page-building loop prepared up to five font layouts for the first scene
+before building the next scene's current layout. A long five-scene library
+exhausted the 160 MiB budget and left no viewport images for paging: the actual
+phone Pages workload missed 477 of 572 intervals, worst 22.186 ms.
+
+The renderer now reserves every page's viewport before optional text caches,
+builds all current layouts before extra font variants, and keeps a valid
+viewport image through swipe release and settling. Body scrolling, changed
+telemetry and zoom restore the live tree through the existing invalidation
+path. Restoring the live tree at every scroll-end event had added roughly 4 ms
+to the release frame, including an end immediately followed by snap begin.
+
+With the same five-scene library on the actual phone, Reading and Pages each
+passed on all five views with zero intervals above 16.67 ms. The worst Reading
+interval was 11.675 ms; the worst Pages interval was 14.971 ms. These are input
+to completed framebuffer-copy measurements, not synchronized panel scanout.
+The full source/evidence bundle is private. Native process recovery and the
+simulated-phone publication checks also passed. No scanout or power-control
+code changed. Pinch and sheet workloads remain separate release checks.
+
+`check_frames.py --scene ID` selects another view without changing the motion
+stream or gate. Omitting it retains the established `reader` workload. Use it
+to check every view of a newly generated library, rather than relying only on
+its first page pair. This budget ordering is not yet a general viewport-only
+cache for arbitrarily long libraries; the real-device gate still applies.
