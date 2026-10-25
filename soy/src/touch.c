@@ -44,7 +44,7 @@ typedef struct {
   int font, graph;
 } Live;
 typedef struct {
-  lv_obj_t *page, *body, **blocks;
+  lv_obj_t *page, *body, **blocks, **text_blocks;
   lv_draw_buf_t **cached;
   int nblocks, zoom, live_count, height;
   Live live[MAX_BINDINGS];
@@ -52,11 +52,23 @@ typedef struct {
 static View views[NS];
 /* Inactive font layouts have independent object/buffer ownership. */
 static View prepared[NS][5];
+static lv_obj_t *layout_store;
 static lv_obj_t *page_images[NS];
 static lv_obj_t *page_headers[NS];
 static int page_dirty[NS];
 static size_t cache_bytes;
+static int preparing_layout;
+static unsigned layout_generation;
 #define CACHE_LIMIT (160u * 1024 * 1024)
+/* Page turns must retain one viewport per page even when a long document or
+ * extra font layout consumes the text budget. This is capacity, not FPS proof. */
+static size_t page_reserve(void) {
+  size_t missing = 0;
+  for (int i = 0; i < count; i++)
+    if (!page_images[i])
+      missing++;
+  return missing * W * 884 * 4;
+}
 static lv_obj_t *pinch_preview, *pinch_layer;
 static lv_draw_buf_t *pinch_image;
 static int pinch_level;
@@ -258,7 +270,7 @@ static lv_obj_t *label(lv_obj_t *parent, const char *text, int font,
   lv_obj_set_clickable(o, false);
   lv_obj_update_layout(o);
   size_t bytes = (size_t)w * lv_obj_get_height(o) * 4;
-  if (bytes < CACHE_LIMIT && cache_bytes + bytes < CACHE_LIMIT) {
+  if (!preparing_layout && bytes < CACHE_LIMIT && cache_bytes + bytes + page_reserve() < CACHE_LIMIT) {
     /* Text is immutable for this object's lifetime. Transparent cached glyphs
      * retain the real button's pressed background and native hit testing. */
     lv_draw_buf_t *buf = lv_snapshot_take(o, LV_COLOR_FORMAT_ARGB8888);
@@ -401,6 +413,8 @@ static void free_blocks(View *v) {
   v->cached = NULL;
   free(v->blocks);
   v->blocks = NULL;
+  free(v->text_blocks);
+  v->text_blocks = NULL;
   v->nblocks = 0;
   for (int j = 0; j < v->live_count; j++)
     free(v->live[j].raw);
@@ -452,7 +466,8 @@ static void build_body(int index) {
   free_blocks(v);
   v->blocks = calloc(MAX_BLOCKS, sizeof(lv_obj_t *));
   v->cached = calloc(MAX_BLOCKS, sizeof(lv_draw_buf_t *));
-  if (!v->blocks || !v->cached) {
+  v->text_blocks = calloc(MAX_BLOCKS, sizeof(lv_obj_t *));
+  if (!v->blocks || !v->cached || !v->text_blocks) {
     stopping = 1;
     return;
   }
@@ -530,8 +545,8 @@ static void build_body(int index) {
        * glyph blending must not run again on every scrolling frame on the A4.
        * The budget bounds memory for large AI-generated documents. */
       size_t bytes = (size_t)lv_obj_get_width(o) * height * 4;
-      if (!strstr(raw, "{{") && bytes < CACHE_LIMIT &&
-          cache_bytes + bytes < CACHE_LIMIT) {
+      if (!preparing_layout && !strstr(raw, "{{") && bytes < CACHE_LIMIT &&
+          cache_bytes + bytes + page_reserve() < CACHE_LIMIT) {
         lv_obj_set_style_bg_color(o, color(code ? 0x101a14 : BG), 0);
         lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
         lv_draw_buf_t *buf = lv_snapshot_take(o, LV_COLOR_FORMAT_XRGB8888);
@@ -541,7 +556,8 @@ static void build_body(int index) {
           lv_image_set_src(image, buf);
           lv_obj_set_pos(image, 34 + indent, y);
           lv_obj_set_clickable(image, false);
-          lv_obj_delete(o);
+          v->text_blocks[v->nblocks] = o;
+          lv_obj_set_hidden(o, true);
           o = image;
           v->cached[v->nblocks] = buf;
           cache_bytes += buf->data_size;
@@ -607,11 +623,11 @@ static void pace_scroll(lv_event_t *e) {
 static void page_event(lv_event_t *e) {
   lv_event_code_t code = lv_event_get_code(e);
   pace_scroll(e);
-  if (code == LV_EVENT_SCROLL_BEGIN || code == LV_EVENT_SCROLL_END) {
+  if (code == LV_EVENT_SCROLL_BEGIN) {
     for (int i = 0; i < count; i++) {
       if (!page_images[i])
         continue;
-      int cached = code == LV_EVENT_SCROLL_BEGIN && !page_dirty[i];
+      int cached = !page_dirty[i];
       lv_obj_set_hidden(page_images[i], !cached);
       lv_obj_set_style_bg_opa(views[i].page,
                               cached ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
@@ -625,6 +641,11 @@ static void page_event(lv_event_t *e) {
                            cached ? LV_OPA_TRANSP : LV_OPA_COVER, 0);
     }
   }
+  /* Keep the identical viewport image through release, snapping and rest.
+   * Restoring the whole live tree at SCROLL_END added 4 ms to the release
+   * frame, including an END immediately followed by the snap's BEGIN.
+   * Body motion, telemetry and zoom already call invalidate_page(), which
+   * restores the live tree exactly when its pixels need to change. */
   if (code == LV_EVENT_SCROLL_END)
     note_scene();
   if (code != LV_EVENT_SCROLL)
@@ -764,6 +785,7 @@ static void reserve_gesture_buffers(void) {
   }
 }
 static void build_pages(void) {
+  layout_generation++;
   reserve_gesture_buffers();
   end_preview(0);
   under_valid = 0;
@@ -772,6 +794,10 @@ static void build_pages(void) {
   lv_indev_reset(pointer, NULL);
   if (pager)
     lv_obj_delete(pager);
+  if (layout_store)
+    lv_obj_delete(layout_store);
+  layout_store = lv_obj_create(lv_screen_active());
+  lv_obj_set_hidden(layout_store, true);
   memset(page_images, 0, sizeof page_images);
   memset(page_headers, 0, sizeof page_headers);
   memset(page_dirty, 0, sizeof page_dirty);
@@ -807,18 +833,18 @@ static void build_pages(void) {
     int scroll = scenes[i].scroll;
     build_body(i);
     lv_obj_scroll_to_y(v->body, scroll, LV_ANIM_OFF);
-    /* Prepare bounded, immutable documents before the first displayed frame.
-     * Pinch release then swaps a complete layout instead of rasterizing the
-     * entire document on the input thread. Oversized/live documents retain the
-     * bounded fallback and remain subject to the same failing performance gate.
-     */
-    /* Leave room for every page's swipe snapshot (prepare_page). */
-    if (!v->live_count && !strstr(scenes[i].body, "{{") && v->nblocks <= 128 &&
-        strlen(scenes[i].body) <= 16384 &&
-        (size_t)v->height * W * 4 * 6 + cache_bytes +
-                (size_t)count * W * 884 * 4 <
-            CACHE_LIMIT) {
+  }
+  /* Build every scene's actual font size first. Otherwise an early scene's
+   * five font variants can evict later scenes' scrolling paragraphs and even
+   * the viewport images that page turns depend on. */
+  for (int j = 0; j < count; j++) {
+    int i = (current + j) % count;
+    View *v = &views[i];
+    /* Keep text layout ready at every font size. Alternate layouts cache only
+     * the reading window, rather than five entire copies of long route cards. */
+    if (!strstr(scenes[i].body, "{{graph.") && strlen(scenes[i].body) <= 16384) {
       View initial = *v;
+      preparing_layout = 1;
       for (int z = 0; z < 5; z++) {
         if (z == initial.zoom)
           continue;
@@ -826,8 +852,10 @@ static void build_pages(void) {
         create_body(i);
         build_body(i);
         lv_obj_set_hidden(v->body, true);
+        lv_obj_set_parent(v->body, layout_store);
         prepared[i][z] = *v;
       }
+      preparing_layout = 0;
       *v = initial;
       scenes[i].height = v->height;
     }
@@ -868,6 +896,7 @@ static void resize_text(int index, int level, int anchor) {
   level = clamp(level, 0, 4);
   if (level == v->zoom)
     return;
+  layout_generation++;
   invalidate_page(index);
   int y = lv_obj_get_scroll_y(v->body) + clamp(anchor - TOP, 0, BOTTOM - TOP);
   int block = 0;
@@ -880,9 +909,11 @@ static void resize_text(int index, int level, int anchor) {
                lv_obj_get_height(v->blocks[block]);
   if (prepared[index][level].body) {
     lv_obj_set_hidden(v->body, true);
+    lv_obj_set_parent(v->body, layout_store);
     prepared[index][v->zoom] = *v;
     *v = prepared[index][level];
     memset(&prepared[index][level], 0, sizeof(View));
+    lv_obj_set_parent(v->body, v->page);
     lv_obj_set_hidden(v->body, false);
     scenes[index].height = v->height;
     lv_obj_update_layout(v->body);
@@ -903,6 +934,81 @@ static void resize_text(int index, int level, int anchor) {
                                ? scenes[index].height - (BOTTOM - TOP)
                                : 0),
                      LV_ANIM_OFF);
+}
+/* Cache one paragraph per idle pass. Source objects remain available beneath
+ * each snapshot, so old reading windows can release their pixels without
+ * reparsing or relaying out a document. No cache work runs during motion. */
+static void prepare_zoom_window(void) {
+  static int ready_scene = -1, ready_block = -1;
+  static unsigned ready_generation;
+  View *active = &views[current];
+  int anchor = lv_obj_get_scroll_y(active->body) + (BOTTOM - TOP) / 2;
+  int block = 0;
+  for (int j = 0; j < active->nblocks; j++)
+    if (lv_obj_get_y(active->blocks[j]) <= anchor)
+      block = j;
+  if (ready_scene == current && ready_block == block &&
+      ready_generation == layout_generation)
+    return;
+  for (int i = 0; i < count; i++)
+    for (int z = 0; z < 5; z++) {
+      View *v = &prepared[i][z];
+      if (!v->body)
+        continue;
+      int center = block < v->nblocks ? lv_obj_get_y(v->blocks[block]) : 0;
+      for (int j = 0; j < v->nblocks; j++) {
+        lv_obj_t *o = v->blocks[j];
+        int y = lv_obj_get_y(o), h = lv_obj_get_height(o);
+        int wanted = i == current && y + h >= center - 1400 && y <= center + 1400;
+        if (!wanted && v->cached[j] && v->text_blocks[j]) {
+          lv_obj_delete(o);
+          cache_bytes -= v->cached[j]->data_size;
+          lv_draw_buf_destroy(v->cached[j]);
+          v->cached[j] = NULL;
+          v->blocks[j] = v->text_blocks[j];
+          v->text_blocks[j] = NULL;
+          lv_obj_set_hidden(v->blocks[j], false);
+        }
+      }
+    }
+  for (int z = 0; z < 5; z++) {
+    View *v = &prepared[current][z];
+    if (!v->body)
+      continue;
+    int center = block < v->nblocks ? lv_obj_get_y(v->blocks[block]) : 0;
+    for (int j = 0; j < v->nblocks; j++) {
+      lv_obj_t *o = v->blocks[j];
+      int y = lv_obj_get_y(o), h = lv_obj_get_height(o), live = 0;
+      for (int k = 0; k < v->live_count; k++)
+        live |= v->live[k].obj == o;
+      if (v->cached[j] || live || y + h < center - 1400 || y > center + 1400)
+        continue;
+      size_t bytes = (size_t)lv_obj_get_width(o) * h * 4;
+      if (cache_bytes + bytes + page_reserve() >= CACHE_LIMIT)
+        return;
+      /* Snapshot the paragraph itself; its hidden parent is not traversed. */
+      if (lv_obj_get_style_bg_opa(o, 0) != LV_OPA_COVER)
+        lv_obj_set_style_bg_color(o, color(BG), 0);
+      lv_obj_set_style_bg_opa(o, LV_OPA_COVER, 0);
+      lv_draw_buf_t *buf = lv_snapshot_take(o, LV_COLOR_FORMAT_XRGB8888);
+      if (!buf)
+        return;
+      lv_draw_buf_set_flag(buf, LV_IMAGE_FLAGS_USER1);
+      lv_obj_t *image = lv_image_create(v->body);
+      lv_image_set_src(image, buf);
+      lv_obj_set_pos(image, lv_obj_get_x(o), y);
+      lv_obj_set_clickable(image, false);
+      lv_obj_set_hidden(o, true);
+      v->text_blocks[j] = o;
+      v->blocks[j] = image;
+      v->cached[j] = buf;
+      cache_bytes += buf->data_size;
+      return;
+    }
+  }
+  ready_scene = current;
+  ready_block = block;
+  ready_generation = layout_generation;
 }
 static int sheet_open_amount(void) {
   if (!sheet)
@@ -2086,8 +2192,10 @@ int main(int argc, char **argv) {
       build_pages();
     }
     if (!blank_screen && t >= prepare_after && !moving && !sheet && !multi_latched &&
-        !pointer_pressed)
+        !pointer_pressed) {
       prepare_page();
+      prepare_zoom_window();
+    }
     if (!blank_screen) {
       /* Release snaps, momentum and sheet settles run on LVGL's 8 ms anim
        * timer. A frame takes ~12 ms, so waiting for the next anim tick after

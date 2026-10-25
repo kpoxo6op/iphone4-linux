@@ -11,6 +11,7 @@ import csv
 import hashlib
 import io
 import json
+import re
 from pathlib import Path
 import subprocess as sp
 import time
@@ -19,6 +20,7 @@ p = argparse.ArgumentParser()
 p.add_argument("--ssh-config", type=Path, required=True)
 p.add_argument("--replay", type=Path, required=True)
 p.add_argument("--out", type=Path, required=True)
+p.add_argument("--scene", default="reader", help="Scene to exercise; defaults to the established reader workload")
 p.add_argument(
     "--host",
     default="iphone4",
@@ -30,6 +32,8 @@ p.add_argument(
     required=True,
 )
 a = p.parse_args()
+if not re.fullmatch(r"[A-Za-z0-9_-]{1,40}", a.scene):
+    p.error("Invalid scene ID")
 a.out.mkdir(parents=True, exist_ok=True)
 ssh = [
     "ssh",
@@ -66,15 +70,15 @@ remote(
     "cat > /run/soy/touch-replay; chmod 700 /run/soy/touch-replay",
     a.replay.read_bytes(),
 )
-remote("printf 'goto reader\n' > /run/soy/control")
+remote(f"printf 'goto {a.scene}\n' > /run/soy/control")
 time.sleep(0.6)
 remote("printf 'scroll -9600\n' > /run/soy/control")
 time.sleep(0.6)
 remote("printf 'scroll 900\n' > /run/soy/control")
 time.sleep(0.6)
 initial = json.loads(remote("cat /run/soy/status.json"))
-if initial["panel"] or initial["contacts"] or initial["scene"] != "reader":
-    raise SystemExit("Reader must be settled with no open panel or contact")
+if initial["panel"] or initial["contacts"] or initial["scene"] != a.scene:
+    raise SystemExit("Requested scene must be settled with no open panel or contact")
 commands = ["wait 1300", "sample", "mark touch_down"]
 pinching = a.surface in ("pinch", "pinch-out")
 if pinching:
@@ -198,6 +202,7 @@ first_motion = next(
 )
 result = {
     "surface": a.surface,
+    "scene": a.scene,
     "scope": "ARM Linux uinput to completed DRM damage copy; panel scanout unverified",
     "backend": states[1]["backend"],
     "input_sha256": hashlib.sha256(stream.encode()).hexdigest(),
